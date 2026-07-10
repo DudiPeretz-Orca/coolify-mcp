@@ -8,7 +8,7 @@
 [![CI](https://github.com/StuMason/coolify-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/StuMason/coolify-mcp/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/StuMason/coolify-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/StuMason/coolify-mcp)
 
-> **The most comprehensive MCP server for Coolify** - 42 optimized tools, smart diagnostics, documentation search, and batch operations for managing your self-hosted PaaS through AI assistants.
+> **The most comprehensive MCP server for Coolify** - 38 optimized tools, smart diagnostics, and documentation search for managing your self-hosted PaaS through AI assistants. (Orca internal fork: destructive delete and batch-operation tools removed — see the fork's README note below.)
 
 📖 **Docs**: [**coolify-mcp.stumason.dev**](https://coolify-mcp.stumason.dev) — install guide, quickstart, full tools reference, MCP primer, Coolify API gotchas, contributing guide, and the public v3 roadmap.
 
@@ -18,30 +18,29 @@ A Model Context Protocol (MCP) server for [Coolify](https://coolify.io/), enabli
 
 ## Features
 
-This MCP server provides **42 token-optimized tools** for **debugging, management, and deployment**:
+This MCP server provides **38 token-optimized tools** for **debugging, management, and deployment** (Orca internal fork — delete/batch-ops tools removed for safety):
 
-| Category             | Tools                                                                                                                               |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| **Infrastructure**   | `get_infrastructure_overview`, `get_mcp_version`, `get_version`, `system` (health, list_resources, enable/disable API)              |
-| **Diagnostics**      | `diagnose_app`, `diagnose_server`, `find_issues`                                                                                    |
-| **Batch Operations** | `restart_project_apps`, `bulk_env_update`, `stop_all_apps`, `redeploy_project`                                                      |
-| **Servers**          | `list_servers`, `get_server`, `validate_server`, `server_resources`, `server_domains`                                               |
-| **Projects**         | `projects` (list, get, create, update, delete via action param)                                                                     |
-| **Environments**     | `environments` (list, get, create, delete via action param)                                                                         |
-| **Applications**     | `list_applications`, `get_application`, `application` (CRUD + delete_preview), `application_logs`                                   |
-| **Databases**        | `list_databases`, `get_database`, `database` (create 8 types, delete), `database_backups` (CRUD schedules, executions incl. delete) |
-| **Services**         | `list_services`, `get_service`, `service` (create, update, delete)                                                                  |
-| **Control**          | `control` (start/stop/restart for apps, databases, services)                                                                        |
-| **Env Vars**         | `env_vars` (CRUD + bulk_update for application, service, and database env vars)                                                     |
-| **Storages**         | `storages` (list, create, update, delete persistent/file storages for apps, databases, services)                                    |
-| **Scheduled Tasks**  | `scheduled_tasks` (list, create, update, delete, list_executions, run_once for apps and services)                                   |
-| **Deployments**      | `list_deployments`, `deploy`, `deployment` (get, cancel, list_for_app)                                                              |
-| **Private Keys**     | `private_keys` (list, get, create, update, delete via action param)                                                                 |
-| **GitHub Apps**      | `github_apps` (list, get, create, update, delete, list_repos, list_branches)                                                        |
-| **Teams**            | `teams` (list, get, get_members, get_current, get_current_members)                                                                  |
-| **Cloud Tokens**     | `cloud_tokens` (Hetzner/DigitalOcean: list, get, create, update, delete, validate)                                                  |
-| **Hetzner Cloud**    | `hetzner` (list_locations, list_server_types, list_images, list_ssh_keys, create_server)                                            |
-| **Documentation**    | `search_docs` (full-text search across Coolify docs)                                                                                |
+| Category            | Tools                                                                                                                                           |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Infrastructure**  | `get_infrastructure_overview`, `get_mcp_version`, `get_version`, `system` (health, list_resources, enable/disable API)                          |
+| **Diagnostics**     | `diagnose_app`, `diagnose_server`, `find_issues`                                                                                                |
+| **Servers**         | `list_servers`, `get_server`, `validate_server`, `server_resources`, `server_domains`                                                           |
+| **Projects**        | `projects` (list, get, create, update via action param — delete removed in this fork)                                                           |
+| **Environments**    | `environments` (list, get, create, delete via action param)                                                                                     |
+| **Applications**    | `list_applications`, `get_application`, `application` (create/update only — delete and delete_preview removed in this fork), `application_logs` |
+| **Databases**       | `list_databases`, `get_database`, `database` (create 8 types, delete), `database_backups` (CRUD schedules, executions incl. delete)             |
+| **Services**        | `list_services`, `get_service`, `service` (create, update, delete)                                                                              |
+| **Control**         | `control` (start/stop/restart for apps, databases, services)                                                                                    |
+| **Env Vars**        | `env_vars` (CRUD + bulk_update for application, service, and database env vars)                                                                 |
+| **Storages**        | `storages` (list, create, update, delete persistent/file storages for apps, databases, services)                                                |
+| **Scheduled Tasks** | `scheduled_tasks` (list, create, update, delete, list_executions, run_once for apps and services)                                               |
+| **Deployments**     | `list_deployments`, `deploy`, `deployment` (get, cancel, list_for_app)                                                                          |
+| **Private Keys**    | `private_keys` (list, get, create, update, delete via action param)                                                                             |
+| **GitHub Apps**     | `github_apps` (list, get, create, update, delete, list_repos, list_branches)                                                                    |
+| **Teams**           | `teams` (list, get, get_members, get_current, get_current_members)                                                                              |
+| **Cloud Tokens**    | `cloud_tokens` (Hetzner/DigitalOcean: list, get, create, update, delete, validate)                                                              |
+| **Hetzner Cloud**   | `hetzner` (list_locations, list_server_types, list_images, list_ssh_keys, create_server)                                                        |
+| **Documentation**   | `search_docs` (full-text search across Coolify docs)                                                                                            |
 
 ### Token-Optimized Design
 
@@ -330,7 +329,7 @@ These tools accept human-friendly identifiers instead of just UUIDs:
 
 ### Projects
 
-- `projects` - Manage projects with `action: list|get|create|update|delete`
+- `projects` - Manage projects with `action: list|get|create|update` (delete removed in this fork)
 
 ### Environments
 
@@ -341,7 +340,7 @@ These tools accept human-friendly identifiers instead of just UUIDs:
 - `list_applications` - List all applications (returns summary)
 - `get_application` - Get application details
 - `application_logs` - Get application logs
-- `application` - Create, update, or delete apps with `action: create_public|create_github|create_key|create_dockerimage|create_dockerfile|update|delete`
+- `application` - Create or update apps with `action: create_public|create_github|create_key|create_dockerimage|create_dockerfile|update` (delete and delete_preview removed in this fork)
   - Deploy from public repos, private GitHub, SSH keys, Docker images, or a raw Dockerfile
   - For docker-compose apps use the `service` tool — Coolify removed `POST /applications/dockercompose` in v4.1.0 in favour of services
   - Configure health checks (path, interval, retries, etc.)
@@ -393,21 +392,11 @@ These tools accept human-friendly identifiers instead of just UUIDs:
 
 - `search_docs` - Search Coolify documentation using full-text search. Indexes 1,500+ doc chunks on first call, returns ranked results with titles, URLs, and snippets (~849 tokens for 5 results)
 
-### Batch Operations
-
-Power user tools for operating on multiple resources at once:
-
-- `restart_project_apps` - Restart all applications in a project
-- `bulk_env_update` - Update or create an environment variable across multiple applications (upsert behavior)
-- `stop_all_apps` - Emergency stop all running applications (requires confirmation)
-- `redeploy_project` - Redeploy all applications in a project with force rebuild
-
 ## Why Coolify MCP?
 
 - **Context-Optimized**: Responses are 90-99% smaller than raw API, preventing context window exhaustion
 - **Smart Lookup**: Find apps by domain (`stuartmason.co.uk`), servers by IP, not just UUIDs
 - **Docs Search**: Built-in full-text search across Coolify documentation — your AI assistant can look up how-tos and troubleshooting without leaving the conversation
-- **Batch Operations**: Restart entire projects, bulk update env vars, emergency stop all apps
 - **Production Ready**: 98%+ test coverage, TypeScript strict mode, comprehensive error handling
 
 ## Related Links

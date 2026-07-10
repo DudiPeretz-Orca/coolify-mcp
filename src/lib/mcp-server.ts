@@ -493,9 +493,9 @@ export class CoolifyMcpServer extends McpServer {
     // =========================================================================
     this.tool(
       'projects',
-      'Manage projects: list/get/create/update/delete',
+      'Manage projects: list/get/create/update (delete unavailable — use the Coolify dashboard)',
       {
-        action: z.enum(['list', 'get', 'create', 'update', 'delete']),
+        action: z.enum(['list', 'get', 'create', 'update']),
         uuid: z.string().optional(),
         name: z.string().optional(),
         description: z.string().optional(),
@@ -518,10 +518,6 @@ export class CoolifyMcpServer extends McpServer {
             if (!uuid)
               return { content: [{ type: 'text' as const, text: 'Error: uuid required' }] };
             return wrap(() => this.client.updateProject(uuid, { name, description }));
-          case 'delete':
-            if (!uuid)
-              return { content: [{ type: 'text' as const, text: 'Error: uuid required' }] };
-            return wrap(() => this.client.deleteProject(uuid));
         }
       },
     );
@@ -586,7 +582,7 @@ export class CoolifyMcpServer extends McpServer {
 
     this.tool(
       'application',
-      'Manage app: create/update/delete/delete_preview',
+      'Manage app: create/update (delete unavailable — use the Coolify dashboard)',
       {
         action: z.enum([
           'create_public',
@@ -595,8 +591,6 @@ export class CoolifyMcpServer extends McpServer {
           'create_dockerimage',
           'create_dockerfile',
           'update',
-          'delete',
-          'delete_preview',
         ]),
         uuid: z.string().optional(),
         // Create fields
@@ -649,13 +643,9 @@ export class CoolifyMcpServer extends McpServer {
         // Update-only: Coolify strips dockerfile_target_build on every create endpoint
         // (controller $allowedFields line 1014) but accepts on PATCH (line 2497).
         dockerfile_target_build: z.string().optional(),
-        // Delete fields
-        delete_volumes: z.boolean().optional(),
-        // Preview fields
-        pull_request_id: z.number().optional(),
       },
       async (args) => {
-        const { action, uuid, delete_volumes } = args;
+        const { action, uuid } = args;
         switch (action) {
           case 'create_public':
             if (
@@ -913,21 +903,9 @@ export class CoolifyMcpServer extends McpServer {
             if (!uuid)
               return { content: [{ type: 'text' as const, text: 'Error: uuid required' }] };
             // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            const { action: _, uuid: __, delete_volumes: ___, ...updateData } = args;
+            const { action: _, uuid: __, ...updateData } = args;
             return wrap(() => this.client.updateApplication(uuid, updateData));
           }
-          case 'delete':
-            if (!uuid)
-              return { content: [{ type: 'text' as const, text: 'Error: uuid required' }] };
-            return wrap(() =>
-              this.client.deleteApplication(uuid, { deleteVolumes: delete_volumes }),
-            );
-          case 'delete_preview':
-            if (!uuid || !args.pull_request_id)
-              return {
-                content: [{ type: 'text' as const, text: 'Error: uuid, pull_request_id required' }],
-              };
-            return wrap(() => this.client.deleteApplicationPreview(uuid, args.pull_request_id!));
         }
       },
     );
@@ -2108,49 +2086,6 @@ export class CoolifyMcpServer extends McpServer {
           }
           return { results };
         }),
-    );
-
-    // =========================================================================
-    // Batch Operations (4 tools)
-    // =========================================================================
-    this.tool(
-      'restart_project_apps',
-      'Restart all apps in project',
-      { project_uuid: z.string() },
-      async ({ project_uuid }) => wrap(() => this.client.restartProjectApps(project_uuid)),
-    );
-
-    this.tool(
-      'bulk_env_update',
-      'Update env var across multiple apps',
-      {
-        app_uuids: z.array(z.string()),
-        key: z.string(),
-        value: z.string(),
-        is_buildtime: z.boolean().optional(),
-        is_runtime: z.boolean().optional(),
-      },
-      async ({ app_uuids, key, value, is_buildtime, is_runtime }) =>
-        wrap(() => this.client.bulkEnvUpdate(app_uuids, key, value, is_buildtime, is_runtime)),
-    );
-
-    this.tool(
-      'stop_all_apps',
-      'EMERGENCY: Stop all running apps',
-      { confirm: z.literal(true) },
-      async ({ confirm }) => {
-        if (!confirm)
-          return { content: [{ type: 'text' as const, text: 'Error: confirm=true required' }] };
-        return wrap(() => this.client.stopAllApps());
-      },
-    );
-
-    this.tool(
-      'redeploy_project',
-      'Redeploy all apps in project',
-      { project_uuid: z.string(), force: z.boolean().optional() },
-      async ({ project_uuid, force }) =>
-        wrap(() => this.client.redeployProjectApps(project_uuid, force ?? true)),
     );
   }
 

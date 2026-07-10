@@ -3,7 +3,7 @@
   "scope": "@masonator",
   "version": "2.13.0",
   "mcpName": "io.github.StuMason/coolify",
-  "description": "MCP server for Coolify — 42 optimized tools for infrastructure management, diagnostics, and documentation search",
+  "description": "MCP server for Coolify — 38 optimized tools for infrastructure management, diagnostics, and documentation search (Orca fork: destructive delete/batch-ops actions removed)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -31,7 +31,7 @@
     "check:spec-drift": "node scripts/check-client-spec-drift.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "prepare": "husky",
+    "prepare": "npm run build",
     "prepublishOnly": "npm test && npm run lint",
     "start": "node dist/index.js"
   },

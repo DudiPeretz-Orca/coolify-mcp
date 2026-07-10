@@ -400,37 +400,6 @@ describe('CoolifyMcpServer v2', () => {
     });
   });
 
-  describe('bulk_env_update tool handler', () => {
-    it('forwards is_buildtime/is_runtime to bulkEnvUpdate', async () => {
-      const spy = jest.spyOn(server['client'], 'bulkEnvUpdate').mockResolvedValue({
-        summary: { total: 2, succeeded: 2, failed: 0 },
-        succeeded: [],
-        failed: [],
-      });
-
-      const tool = (
-        server as unknown as {
-          _registeredTools: Record<
-            string,
-            { handler: (args: Record<string, unknown>, extra: unknown) => Promise<unknown> }
-          >;
-        }
-      )._registeredTools['bulk_env_update'];
-      await tool.handler(
-        {
-          app_uuids: ['app-1', 'app-2'],
-          key: 'PEM_KEY',
-          value: 'multiline',
-          is_buildtime: false,
-          is_runtime: true,
-        },
-        {},
-      );
-
-      expect(spy).toHaveBeenCalledWith(['app-1', 'app-2'], 'PEM_KEY', 'multiline', false, true);
-    });
-  });
-
   describe('application tool handler', () => {
     // Regression for #178 — verify the application tool's create_* hand-picks
     // forward build-config and health_check_* fields to the client. Previously
@@ -663,6 +632,63 @@ describe('CoolifyMcpServer v2', () => {
       const updateData = spy.mock.calls[0]?.[1] as unknown as Record<string, unknown>;
       expect(updateData).not.toHaveProperty('action');
       expect(updateData).not.toHaveProperty('uuid');
+    });
+  });
+
+  describe('destructive actions removed (Orca fork hardening)', () => {
+    const getTool = (
+      srv: CoolifyMcpServer,
+      name: string,
+    ):
+      | { handler: (args: Record<string, unknown>, extra: unknown) => Promise<unknown> }
+      | undefined =>
+      (
+        srv as unknown as {
+          _registeredTools: Record<
+            string,
+            { handler: (args: Record<string, unknown>, extra: unknown) => Promise<unknown> }
+          >;
+        }
+      )._registeredTools[name];
+
+    it('application tool has no delete action (client.deleteApplication not called)', async () => {
+      const spy = jest.spyOn(server['client'], 'deleteApplication');
+      const tool = getTool(server, 'application');
+      expect(tool).toBeDefined();
+      await tool!.handler({ action: 'delete', uuid: 'app-uuid' }, {});
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('application tool has no delete_preview action (client.deleteApplicationPreview not called)', async () => {
+      const spy = jest.spyOn(server['client'], 'deleteApplicationPreview');
+      const tool = getTool(server, 'application');
+      expect(tool).toBeDefined();
+      await tool!.handler({ action: 'delete_preview', uuid: 'app-uuid', pull_request_id: 1 }, {});
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('projects tool has no delete action (client.deleteProject not called)', async () => {
+      const spy = jest.spyOn(server['client'], 'deleteProject');
+      const tool = getTool(server, 'projects');
+      expect(tool).toBeDefined();
+      await tool!.handler({ action: 'delete', uuid: 'proj-uuid' }, {});
+      expect(spy).not.toHaveBeenCalled();
+    });
+
+    it('has no restart_project_apps tool', () => {
+      expect(getTool(server, 'restart_project_apps')).toBeUndefined();
+    });
+
+    it('has no bulk_env_update tool', () => {
+      expect(getTool(server, 'bulk_env_update')).toBeUndefined();
+    });
+
+    it('has no stop_all_apps tool', () => {
+      expect(getTool(server, 'stop_all_apps')).toBeUndefined();
+    });
+
+    it('has no redeploy_project tool', () => {
+      expect(getTool(server, 'redeploy_project')).toBeUndefined();
     });
   });
 
