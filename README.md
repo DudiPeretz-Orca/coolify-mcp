@@ -26,7 +26,7 @@ This MCP server provides **38 token-optimized tools** for **debugging, managemen
 | **Diagnostics**     | `diagnose_app`, `diagnose_server`, `find_issues`                                                                                                |
 | **Servers**         | `list_servers`, `get_server`, `validate_server`, `server_resources`, `server_domains`                                                           |
 | **Projects**        | `projects` (list, get, create, update via action param — delete removed in this fork)                                                           |
-| **Environments**    | `environments` (list, get, create, delete via action param)                                                                                     |
+| **Environments**    | `environments` (list, get, create via action param — delete removed in this fork)                                                               |
 | **Applications**    | `list_applications`, `get_application`, `application` (create/update only — delete and delete_preview removed in this fork), `application_logs` |
 | **Databases**       | `list_databases`, `get_database`, `database` (create 8 types, delete), `database_backups` (CRUD schedules, executions incl. delete)             |
 | **Services**        | `list_services`, `get_service`, `service` (create, update, delete)                                                                              |
@@ -333,7 +333,7 @@ These tools accept human-friendly identifiers instead of just UUIDs:
 
 ### Environments
 
-- `environments` - Manage environments with `action: list|get|create|delete`
+- `environments` - Manage environments with `action: list|get|create` (delete removed in this fork)
 
 ### Applications
 

@@ -527,9 +527,9 @@ export class CoolifyMcpServer extends McpServer {
     // =========================================================================
     this.tool(
       'environments',
-      'Manage environments: list/get/create/delete (get includes dragonfly/keydb/clickhouse DBs missing from API)',
+      'Manage environments: list/get/create (delete unavailable — use the Coolify dashboard) (get includes dragonfly/keydb/clickhouse DBs missing from API)',
       {
-        action: z.enum(['list', 'get', 'create', 'delete']),
+        action: z.enum(['list', 'get', 'create']),
         project_uuid: z.string(),
         name: z.string().optional(),
         description: z.string().optional(),
@@ -549,10 +549,6 @@ export class CoolifyMcpServer extends McpServer {
             return wrap(() =>
               this.client.createProjectEnvironment(project_uuid, { name, description }),
             );
-          case 'delete':
-            if (!name)
-              return { content: [{ type: 'text' as const, text: 'Error: name required' }] };
-            return wrap(() => this.client.deleteProjectEnvironment(project_uuid, name));
         }
       },
     );

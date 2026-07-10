@@ -675,6 +675,14 @@ describe('CoolifyMcpServer v2', () => {
       expect(spy).not.toHaveBeenCalled();
     });
 
+    it('environments tool has no delete action (client.deleteProjectEnvironment not called)', async () => {
+      const spy = jest.spyOn(server['client'], 'deleteProjectEnvironment');
+      const tool = getTool(server, 'environments');
+      expect(tool).toBeDefined();
+      await tool!.handler({ action: 'delete', project_uuid: 'proj-uuid', name: 'staging' }, {});
+      expect(spy).not.toHaveBeenCalled();
+    });
+
     it('has no restart_project_apps tool', () => {
       expect(getTool(server, 'restart_project_apps')).toBeUndefined();
     });
