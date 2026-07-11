@@ -3,7 +3,7 @@
   "scope": "@masonator",
   "version": "2.13.0",
   "mcpName": "io.github.StuMason/coolify",
-  "description": "MCP server for Coolify — 38 optimized tools for infrastructure management, diagnostics, and documentation search (Orca fork: destructive delete/batch-ops actions removed)",
+  "description": "MCP server for Coolify — 15 tools for infrastructure management and diagnostics (Orca fork: hardened to expose only these 15; the obot gateway that hosts this server has no per-server tool filter, so the fork itself enforces the allowlist)",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

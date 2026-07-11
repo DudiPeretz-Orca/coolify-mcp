@@ -8,7 +8,7 @@
 [![CI](https://github.com/StuMason/coolify-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/StuMason/coolify-mcp/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/StuMason/coolify-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/StuMason/coolify-mcp)
 
-> **The most comprehensive MCP server for Coolify** - 38 optimized tools, smart diagnostics, and documentation search for managing your self-hosted PaaS through AI assistants. (Orca internal fork: destructive delete and batch-operation tools removed — see the fork's README note below.)
+> **The most comprehensive MCP server for Coolify** - now hardened by the Orca internal fork to expose exactly 15 tools for managing your self-hosted PaaS through AI assistants. (Orca internal fork: the obot gateway hosting this server has no per-server tool filter, so the fork itself is the enforcement layer — all destructive, batch-operation, and non-essential tools are removed at the registration level. See the fork's README note below.)
 
 📖 **Docs**: [**coolify-mcp.stumason.dev**](https://coolify-mcp.stumason.dev) — install guide, quickstart, full tools reference, MCP primer, Coolify API gotchas, contributing guide, and the public v3 roadmap.
 
@@ -18,29 +18,19 @@ A Model Context Protocol (MCP) server for [Coolify](https://coolify.io/), enabli
 
 ## Features
 
-This MCP server provides **38 token-optimized tools** for **debugging, management, and deployment** (Orca internal fork — delete/batch-ops tools removed for safety):
+This MCP server provides **15 token-optimized tools** for **debugging, management, and deployment** (Orca internal fork — hardened to expose only these 15 tools; the obot gateway has no per-server tool filter, so this is the enforcement layer):
 
-| Category            | Tools                                                                                                                                           |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Infrastructure**  | `get_infrastructure_overview`, `get_mcp_version`, `get_version`, `system` (health, list_resources, enable/disable API)                          |
-| **Diagnostics**     | `diagnose_app`, `diagnose_server`, `find_issues`                                                                                                |
-| **Servers**         | `list_servers`, `get_server`, `validate_server`, `server_resources`, `server_domains`                                                           |
-| **Projects**        | `projects` (list, get, create, update via action param — delete removed in this fork)                                                           |
-| **Environments**    | `environments` (list, get, create via action param — delete removed in this fork)                                                               |
-| **Applications**    | `list_applications`, `get_application`, `application` (create/update only — delete and delete_preview removed in this fork), `application_logs` |
-| **Databases**       | `list_databases`, `get_database`, `database` (create 8 types, delete), `database_backups` (CRUD schedules, executions incl. delete)             |
-| **Services**        | `list_services`, `get_service`, `service` (create, update, delete)                                                                              |
-| **Control**         | `control` (start/stop/restart for apps, databases, services)                                                                                    |
-| **Env Vars**        | `env_vars` (CRUD + bulk_update for application, service, and database env vars)                                                                 |
-| **Storages**        | `storages` (list, create, update, delete persistent/file storages for apps, databases, services)                                                |
-| **Scheduled Tasks** | `scheduled_tasks` (list, create, update, delete, list_executions, run_once for apps and services)                                               |
-| **Deployments**     | `list_deployments`, `deploy`, `deployment` (get, cancel, list_for_app)                                                                          |
-| **Private Keys**    | `private_keys` (list, get, create, update, delete via action param)                                                                             |
-| **GitHub Apps**     | `github_apps` (list, get, create, update, delete, list_repos, list_branches)                                                                    |
-| **Teams**           | `teams` (list, get, get_members, get_current, get_current_members)                                                                              |
-| **Cloud Tokens**    | `cloud_tokens` (Hetzner/DigitalOcean: list, get, create, update, delete, validate)                                                              |
-| **Hetzner Cloud**   | `hetzner` (list_locations, list_server_types, list_images, list_ssh_keys, create_server)                                                        |
-| **Documentation**   | `search_docs` (full-text search across Coolify docs)                                                                                            |
+| Category           | Tools                                                                                                                        |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| **Infrastructure** | `get_infrastructure_overview`, `get_version`                                                                                 |
+| **Diagnostics**    | `diagnose_app`, `find_issues`                                                                                                |
+| **Servers**        | `list_servers`                                                                                                               |
+| **Projects**       | `projects` (list, get, create, update via action param — delete removed in this fork)                                        |
+| **Environments**   | `environments` (list, get, create via action param — delete removed in this fork)                                            |
+| **Applications**   | `list_applications`, `application` (create/update only — delete and delete_preview removed in this fork), `application_logs` |
+| **Control**        | `control` (start/stop/restart for apps, databases, services)                                                                 |
+| **Env Vars**       | `env_vars` (CRUD + bulk_update for application, service, and database env vars)                                              |
+| **Deployments**    | `list_deployments`, `deploy`, `deployment` (get, cancel, list_for_app)                                                       |
 
 ### Token-Optimized Design
 
@@ -230,12 +220,10 @@ What's running on my servers?
 ```text
 Diagnose my stuartmason.co.uk app
 What's wrong with my-api application?
-Check the status of server 192.168.1.100
 Find any issues in my infrastructure
 Get the logs for application {uuid}
 What environment variables are set for application {uuid}?
 Show me recent deployments for application {uuid}
-What resources are running on server {uuid}?
 ```
 
 ### Application Management
@@ -256,24 +244,6 @@ Create a staging environment in project {uuid}
 Deploy my app from private GitHub repo org/repo on branch main
 Deploy nginx:latest from Docker Hub
 Deploy from public repo https://github.com/org/repo
-```
-
-### Documentation & Help
-
-```text
-How do I set up Docker Compose with Coolify?
-Search the docs for health check configuration
-How do I fix a 502 Bad Gateway error?
-What are Coolify environment variables?
-```
-
-### Teams & Cloud Providers
-
-```text
-Who has access to my Coolify instance?
-Show me the current team members
-List my cloud provider tokens
-Validate my Hetzner API token
 ```
 
 ## Environment Variables
@@ -308,7 +278,6 @@ node dist/index.js
 ### Infrastructure
 
 - `get_version` - Get Coolify API version
-- `get_mcp_version` - Get coolify-mcp server version (useful to verify which version is installed)
 - `get_infrastructure_overview` - Get a high-level overview of all infrastructure (servers, projects, applications, databases, services)
 
 ### Diagnostics (Smart Lookup)
@@ -316,16 +285,11 @@ node dist/index.js
 These tools accept human-friendly identifiers instead of just UUIDs:
 
 - `diagnose_app` - Get comprehensive app diagnostics (status, logs, env vars, deployments). Accepts UUID, name, or domain (e.g., "stuartmason.co.uk" or "my-app")
-- `diagnose_server` - Get server diagnostics (status, resources, domains, validation). Accepts UUID, name, or IP address (e.g., "coolify-apps" or "192.168.1.100")
 - `find_issues` - Scan entire infrastructure for unhealthy apps, databases, services, and unreachable servers
 
 ### Servers
 
 - `list_servers` - List all servers (returns summary)
-- `get_server` - Get server details
-- `server_resources` - Get resources running on a server
-- `server_domains` - Get domains configured on a server
-- `validate_server` - Validate server connection
 
 ### Projects
 
@@ -338,33 +302,12 @@ These tools accept human-friendly identifiers instead of just UUIDs:
 ### Applications
 
 - `list_applications` - List all applications (returns summary)
-- `get_application` - Get application details
 - `application_logs` - Get application logs
 - `application` - Create or update apps with `action: create_public|create_github|create_key|create_dockerimage|create_dockerfile|update` (delete and delete_preview removed in this fork)
   - Deploy from public repos, private GitHub, SSH keys, Docker images, or a raw Dockerfile
-  - For docker-compose apps use the `service` tool — Coolify removed `POST /applications/dockercompose` in v4.1.0 in favour of services
   - Configure health checks (path, interval, retries, etc.)
-- `env_vars` - Manage env vars with `resource: application, action: list|create|update|delete`
-- `control` - Start/stop/restart with `resource: application, action: start|stop|restart`
-
-### Databases
-
-- `list_databases` - List all databases (returns summary)
-- `get_database` - Get database details
-- `database` - Create or delete databases with `action: create|delete, type: postgresql|mysql|mariadb|mongodb|redis|keydb|clickhouse|dragonfly`
-- `database_backups` - Manage backup schedules with `action: list_schedules|get_schedule|create|update|delete|list_executions|get_execution`
-  - Configure frequency, retention policies, S3 storage
-  - Enable/disable schedules without deletion
-  - View backup execution history
-- `control` - Start/stop/restart with `resource: database, action: start|stop|restart`
-
-### Services
-
-- `list_services` - List all services (returns summary)
-- `get_service` - Get service details
-- `service` - Create, update, or delete services with `action: create|update|delete`
-- `env_vars` - Manage env vars with `resource: service, action: list|create|delete`
-- `control` - Start/stop/restart with `resource: service, action: start|stop|restart`
+- `env_vars` - Manage env vars with `resource: application|service|database, action: list|create|update|delete|bulk_update`
+- `control` - Start/stop/restart with `resource: application|database|service, action: start|stop|restart`
 
 ### Deployments
 
@@ -372,32 +315,12 @@ These tools accept human-friendly identifiers instead of just UUIDs:
 - `deploy` - Deploy by tag or UUID
 - `deployment` - Manage deployments with `action: get|cancel|list_for_app` (supports `lines` and `page` params for paginated log output with `logs_meta`)
 
-### Private Keys
-
-- `private_keys` - Manage SSH keys with `action: list|get|create|update|delete`
-
-### GitHub Apps
-
-- `github_apps` - Manage GitHub App integrations with `action: list|get|create|update|delete`
-
-### Teams
-
-- `teams` - Manage teams with `action: list|get|get_members|get_current|get_current_members`
-
-### Cloud Tokens
-
-- `cloud_tokens` - Manage cloud provider tokens (Hetzner/DigitalOcean) with `action: list|get|create|update|delete|validate`
-
-### Documentation
-
-- `search_docs` - Search Coolify documentation using full-text search. Indexes 1,500+ doc chunks on first call, returns ranked results with titles, URLs, and snippets (~849 tokens for 5 results)
-
 ## Why Coolify MCP?
 
 - **Context-Optimized**: Responses are 90-99% smaller than raw API, preventing context window exhaustion
-- **Smart Lookup**: Find apps by domain (`stuartmason.co.uk`), servers by IP, not just UUIDs
-- **Docs Search**: Built-in full-text search across Coolify documentation — your AI assistant can look up how-tos and troubleshooting without leaving the conversation
+- **Smart Lookup**: Find apps by domain (`stuartmason.co.uk`), not just UUIDs
 - **Production Ready**: 98%+ test coverage, TypeScript strict mode, comprehensive error handling
+- **Hardened**: this fork exposes exactly 15 tools at the registration level — no delete/batch-ops/cloud-provisioning/docs-search surface, regardless of gateway configuration
 
 ## Related Links
 

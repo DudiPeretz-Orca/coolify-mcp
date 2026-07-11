@@ -371,35 +371,6 @@ describe('CoolifyMcpServer v2', () => {
     });
   });
 
-  describe('system tool handler', () => {
-    const callSystem = async (
-      srv: CoolifyMcpServer,
-      args: Record<string, unknown>,
-    ): Promise<unknown> => {
-      const tool = (
-        srv as unknown as {
-          _registeredTools: Record<
-            string,
-            { handler: (args: Record<string, unknown>, extra: unknown) => Promise<unknown> }
-          >;
-        }
-      )._registeredTools['system'];
-      return tool.handler(args, {});
-    };
-
-    it('forwards include_full and reveal to listResources', async () => {
-      const spy = jest.spyOn(server['client'], 'listResources').mockResolvedValue([]);
-      await callSystem(server, { action: 'list_resources', include_full: true, reveal: true });
-      expect(spy).toHaveBeenCalledWith({ include_full: true, reveal: true });
-    });
-
-    it('calls listResources with undefined flags when neither is passed', async () => {
-      const spy = jest.spyOn(server['client'], 'listResources').mockResolvedValue([]);
-      await callSystem(server, { action: 'list_resources' });
-      expect(spy).toHaveBeenCalledWith({ include_full: undefined, reveal: undefined });
-    });
-  });
-
   describe('application tool handler', () => {
     // Regression for #178 — verify the application tool's create_* hand-picks
     // forward build-config and health_check_* fields to the client. Previously
@@ -700,64 +671,6 @@ describe('CoolifyMcpServer v2', () => {
     });
   });
 
-  describe('database tool handler', () => {
-    // Regression for #217 — the database tool's create action didn't expose
-    // destination_uuid, so Coolify rejected creates on servers with more than
-    // one destination ("Server has multiple destinations. Please provide a
-    // destination_uuid.").
-
-    const callDatabase = async (
-      srv: CoolifyMcpServer,
-      args: Record<string, unknown>,
-    ): Promise<unknown> => {
-      const tool = (
-        srv as unknown as {
-          _registeredTools: Record<
-            string,
-            { handler: (args: Record<string, unknown>, extra: unknown) => Promise<unknown> }
-          >;
-        }
-      )._registeredTools['database'];
-      return tool.handler(args, {});
-    };
-
-    it('forwards destination_uuid to createPostgresql when provided', async () => {
-      const spy = jest
-        .spyOn(server['client'], 'createPostgresql')
-        .mockResolvedValue({ uuid: 'db-1' });
-
-      await callDatabase(server, {
-        action: 'create',
-        type: 'postgresql',
-        project_uuid: 'proj-uuid',
-        server_uuid: 'server-uuid',
-        destination_uuid: 'dest-uuid',
-      });
-
-      expect(spy).toHaveBeenCalledWith(
-        expect.objectContaining({
-          destination_uuid: 'dest-uuid',
-        }),
-      );
-    });
-
-    it('omits destination_uuid from createPostgresql when not provided', async () => {
-      const spy = jest
-        .spyOn(server['client'], 'createPostgresql')
-        .mockResolvedValue({ uuid: 'db-2' });
-
-      await callDatabase(server, {
-        action: 'create',
-        type: 'postgresql',
-        project_uuid: 'proj-uuid',
-        server_uuid: 'server-uuid',
-      });
-
-      const forwarded = spy.mock.calls[0]?.[0] as unknown as Record<string, unknown>;
-      expect(forwarded.destination_uuid).toBeUndefined();
-    });
-  });
-
   describe('deployment tool handler (#232 essential projection)', () => {
     // Regression for #232: `deployment {action: get, lines: N}` used to call
     // getDeployment(uuid, { includeLogs: true }) and spread the RAW upstream
@@ -891,246 +804,6 @@ describe('CoolifyMcpServer v2', () => {
       const text = result.content[0].text;
 
       expect(text.length).toBeLessThan(20_000);
-    });
-  });
-
-  describe('scheduled_tasks tool handler', () => {
-    // Regression for #234 — Coolify's `command` column is a 255-char varchar and
-    // rejects longer commands with a bodyless HTTP 500. The zod schema must reject
-    // an over-long command locally, before any HTTP call is attempted.
-
-    const getScheduledTasksTool = (
-      srv: CoolifyMcpServer,
-    ): {
-      inputSchema: { safeParse: (args: unknown) => { success: boolean; error?: unknown } };
-      handler: (args: Record<string, unknown>, extra: unknown) => Promise<unknown>;
-    } =>
-      (
-        srv as unknown as {
-          _registeredTools: Record<
-            string,
-            {
-              inputSchema: { safeParse: (args: unknown) => { success: boolean; error?: unknown } };
-              handler: (args: Record<string, unknown>, extra: unknown) => Promise<unknown>;
-            }
-          >;
-        }
-      )._registeredTools['scheduled_tasks'];
-
-    const baseArgs = {
-      resource: 'application' as const,
-      action: 'create' as const,
-      uuid: 'app-uuid',
-      name: 'my-task',
-      frequency: '* * * * *',
-    };
-
-    it('rejects a command over 255 chars locally, with an actionable message', () => {
-      const createSpy = jest.spyOn(server['client'], 'createApplicationScheduledTask');
-      const updateSpy = jest.spyOn(server['client'], 'updateApplicationScheduledTask');
-
-      const tool = getScheduledTasksTool(server);
-      const result = tool.inputSchema.safeParse({ ...baseArgs, command: 'a'.repeat(256) });
-
-      expect(result.success).toBe(false);
-      const error = result.error as { issues: { message: string }[] };
-      expect(error.issues[0]?.message).toContain(
-        'Coolify rejects scheduled-task commands longer than 255 chars',
-      );
-
-      // No HTTP call should have been attempted.
-      expect(createSpy).not.toHaveBeenCalled();
-      expect(updateSpy).not.toHaveBeenCalled();
-    });
-
-    it('accepts a command at exactly 255 chars', () => {
-      const tool = getScheduledTasksTool(server);
-      const result = tool.inputSchema.safeParse({ ...baseArgs, command: 'a'.repeat(255) });
-
-      expect(result.success).toBe(true);
-    });
-  });
-
-  describe('scheduled_tasks tool handler - run_once', () => {
-    type ServerWithSleep = { sleep: (ms: number) => Promise<void> };
-
-    const callScheduledTasks = async (
-      srv: CoolifyMcpServer,
-      args: Record<string, unknown>,
-    ): Promise<{ content: Array<{ type: string; text: string }> }> => {
-      const tool = (
-        srv as unknown as {
-          _registeredTools: Record<
-            string,
-            { handler: (args: Record<string, unknown>, extra: unknown) => Promise<unknown> }
-          >;
-        }
-      )._registeredTools['scheduled_tasks'];
-      return tool.handler(args, {}) as Promise<{ content: Array<{ type: string; text: string }> }>;
-    };
-
-    const baseArgs = {
-      resource: 'application' as const,
-      action: 'run_once' as const,
-      uuid: 'app-uuid',
-      command: 'php artisan migrate',
-      container: 'app',
-      wait_seconds: 10, // small budget -> few poll attempts in tests
-    };
-
-    const mockTask = {
-      id: 1,
-      uuid: 'task-uuid',
-      enabled: true,
-      name: 'oneoff-abc123',
-      command: 'php artisan migrate',
-      frequency: '* * * * *',
-      timeout: 0,
-      created_at: '',
-      updated_at: '',
-    };
-
-    beforeEach(() => {
-      // Poll loop uses a real setTimeout by default; override the instance method
-      // directly so tests are instant (jest.spyOn's generic inference struggles
-      // with private methods here, so a plain shadowing assignment is simpler).
-      (server as unknown as ServerWithSleep).sleep = (): Promise<void> => Promise.resolve();
-    });
-
-    it('validates command and container are required', async () => {
-      const result = await callScheduledTasks(server, {
-        resource: 'application',
-        action: 'run_once',
-        uuid: 'app-uuid',
-      });
-      expect(result.content[0]!.text).toBe('Error: command, container required');
-    });
-
-    it('creates a task, polls until a terminal execution, returns its output, and deletes the task', async () => {
-      const createSpy = jest
-        .spyOn(server['client'], 'createApplicationScheduledTask')
-        .mockResolvedValue(mockTask);
-      const listSpy = jest
-        .spyOn(server['client'], 'listApplicationScheduledTaskExecutions')
-        .mockResolvedValueOnce([]) // first poll: nothing yet
-        .mockResolvedValueOnce([
-          {
-            uuid: 'exec-uuid',
-            status: 'success',
-            message: 'Migrated: 2026_01_01_000000_add_col',
-            retry_count: 0,
-            created_at: '',
-            updated_at: '',
-          },
-        ]);
-      const deleteSpy = jest
-        .spyOn(server['client'], 'deleteApplicationScheduledTask')
-        .mockResolvedValue({ message: 'deleted' });
-
-      const result = await callScheduledTasks(server, baseArgs);
-
-      expect(createSpy).toHaveBeenCalledWith(
-        'app-uuid',
-        expect.objectContaining({
-          command: 'php artisan migrate',
-          frequency: '* * * * *',
-          container: 'app',
-          enabled: true,
-        }),
-      );
-      expect(listSpy).toHaveBeenCalledTimes(2);
-      expect(listSpy).toHaveBeenCalledWith('app-uuid', 'task-uuid');
-      expect(deleteSpy).toHaveBeenCalledWith('app-uuid', 'task-uuid');
-
-      const parsed = JSON.parse(result.content[0]!.text) as {
-        status: string;
-        message: string;
-        task_uuid: string;
-        cleanup: string;
-      };
-      expect(parsed.status).toBe('success');
-      expect(parsed.message).toBe('Migrated: 2026_01_01_000000_add_col');
-      expect(parsed.task_uuid).toBe('task-uuid');
-      expect(parsed.cleanup).toContain('deleted');
-    });
-
-    it('times out when no execution ever appears, and still deletes the task', async () => {
-      jest.spyOn(server['client'], 'createApplicationScheduledTask').mockResolvedValue(mockTask);
-      jest.spyOn(server['client'], 'listApplicationScheduledTaskExecutions').mockResolvedValue([]);
-      const deleteSpy = jest
-        .spyOn(server['client'], 'deleteApplicationScheduledTask')
-        .mockResolvedValue({ message: 'deleted' });
-
-      const result = await callScheduledTasks(server, baseArgs);
-
-      expect(deleteSpy).toHaveBeenCalledWith('app-uuid', 'task-uuid');
-      expect(result.content[0]!.text).toContain('Timed out');
-      expect(result.content[0]!.text).toContain('task-uuid');
-      expect(result.content[0]!.text).toContain('deleted');
-    });
-
-    it('still deletes the task when polling throws, and surfaces the poll error', async () => {
-      jest.spyOn(server['client'], 'createApplicationScheduledTask').mockResolvedValue(mockTask);
-      jest
-        .spyOn(server['client'], 'listApplicationScheduledTaskExecutions')
-        .mockRejectedValue(new Error('network blip'));
-      const deleteSpy = jest
-        .spyOn(server['client'], 'deleteApplicationScheduledTask')
-        .mockResolvedValue({ message: 'deleted' });
-
-      const result = await callScheduledTasks(server, baseArgs);
-
-      expect(deleteSpy).toHaveBeenCalledWith('app-uuid', 'task-uuid');
-      expect(result.content[0]!.text).toContain('network blip');
-      expect(result.content[0]!.text).toContain('task-uuid');
-    });
-
-    it('warns loudly with the task UUID when the cleanup delete itself fails', async () => {
-      jest.spyOn(server['client'], 'createApplicationScheduledTask').mockResolvedValue(mockTask);
-      jest.spyOn(server['client'], 'listApplicationScheduledTaskExecutions').mockResolvedValue([
-        {
-          uuid: 'exec-uuid',
-          status: 'success',
-          message: 'ok',
-          retry_count: 0,
-          created_at: '',
-          updated_at: '',
-        },
-      ]);
-      jest
-        .spyOn(server['client'], 'deleteApplicationScheduledTask')
-        .mockRejectedValue(new Error('403 forbidden'));
-
-      const result = await callScheduledTasks(server, baseArgs);
-
-      const parsed = JSON.parse(result.content[0]!.text) as { cleanup: string };
-      expect(parsed.cleanup).toContain('WARNING');
-      expect(parsed.cleanup).toContain('task-uuid');
-      expect(parsed.cleanup).toContain('403 forbidden');
-    });
-
-    it('supports the service resource', async () => {
-      const createSpy = jest
-        .spyOn(server['client'], 'createServiceScheduledTask')
-        .mockResolvedValue(mockTask);
-      jest.spyOn(server['client'], 'listServiceScheduledTaskExecutions').mockResolvedValue([
-        {
-          uuid: 'e',
-          status: 'success',
-          message: 'ok',
-          retry_count: 0,
-          created_at: '',
-          updated_at: '',
-        },
-      ]);
-      const deleteSpy = jest
-        .spyOn(server['client'], 'deleteServiceScheduledTask')
-        .mockResolvedValue({ message: 'deleted' });
-
-      await callScheduledTasks(server, { ...baseArgs, resource: 'service', uuid: 'svc-uuid' });
-
-      expect(createSpy).toHaveBeenCalledWith('svc-uuid', expect.any(Object));
-      expect(deleteSpy).toHaveBeenCalledWith('svc-uuid', 'task-uuid');
     });
   });
 
@@ -1304,6 +977,40 @@ describe('CoolifyMcpServer v2', () => {
       expect(getDeploymentSpy).not.toHaveBeenCalledWith('dep-2');
       expect(parsed.data.deployment_uuid).toBe('dep-1');
       expect(parsed.data.additional_deployment_uuids).toEqual(['dep-2']);
+    });
+  });
+
+  describe('tool registry hardening (Orca fork — obot gateway has no tool filter)', () => {
+    // The obot gateway that hosts this server turned out to have NO per-server
+    // tool filter, so the fork itself is the enforcement layer: only these 15
+    // tools may ever be registered. This is an exact-set assertion (not just
+    // absence checks) so that adding a new tool registration without updating
+    // this allowlist fails loudly.
+    const EXPECTED_TOOLS = [
+      'get_version',
+      'get_infrastructure_overview',
+      'diagnose_app',
+      'find_issues',
+      'list_servers',
+      'projects',
+      'environments',
+      'list_applications',
+      'application',
+      'application_logs',
+      'deploy',
+      'list_deployments',
+      'deployment',
+      'env_vars',
+      'control',
+    ].sort();
+
+    it('registers exactly the 15 intended tools — no more, no less', () => {
+      const registeredNames = Object.keys(
+        (server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools,
+      ).sort();
+
+      expect(registeredNames).toHaveLength(15);
+      expect(registeredNames).toEqual(EXPECTED_TOOLS);
     });
   });
 });
