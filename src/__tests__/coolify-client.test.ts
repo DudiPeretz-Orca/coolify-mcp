@@ -1172,7 +1172,9 @@ describe('CoolifyClient', () => {
     });
 
     it('should list applications with summary', async () => {
-      mockFetch.mockResolvedValueOnce(mockResponse([mockApplication]));
+      mockFetch.mockResolvedValueOnce(
+        mockResponse([{ ...mockApplication, description: 'owner: alice@example.com' }]),
+      );
 
       const result = await client.listApplications({ summary: true });
 
@@ -1180,6 +1182,7 @@ describe('CoolifyClient', () => {
         {
           uuid: 'app-uuid',
           name: 'test-app',
+          description: 'owner: alice@example.com',
           status: 'running',
           fqdn: 'https://app.example.com',
           git_repository: 'https://github.com/user/repo',

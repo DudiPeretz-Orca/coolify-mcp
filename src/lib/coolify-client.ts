@@ -144,6 +144,7 @@ export interface ServerSummary {
 export interface ApplicationSummary {
   uuid: string;
   name: string;
+  description?: string;
   status?: string;
   fqdn?: string;
   git_repository?: string;
@@ -277,6 +278,7 @@ function toApplicationSummary(app: Application): ApplicationSummary {
   return {
     uuid: app.uuid,
     name: app.name,
+    description: app.description,
     status: app.status,
     fqdn: app.fqdn,
     git_repository: app.git_repository,
