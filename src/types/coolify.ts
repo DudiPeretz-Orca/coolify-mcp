@@ -11,6 +11,8 @@ export interface CoolifyConfig {
   baseUrl: string;
   accessToken: string;
   customHeaders?: Record<string, string>;
+  /** Base URL of the artifact deployer; the `artifact` tool errors when unset. */
+  deployerUrl?: string;
 }
 
 // =============================================================================

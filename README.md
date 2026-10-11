@@ -8,7 +8,7 @@
 [![CI](https://github.com/StuMason/coolify-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/StuMason/coolify-mcp/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/StuMason/coolify-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/StuMason/coolify-mcp)
 
-> **The most comprehensive MCP server for Coolify** - now hardened by the Orca internal fork to expose exactly 15 tools for managing your self-hosted PaaS through AI assistants. (Orca internal fork: the obot gateway hosting this server has no per-server tool filter, so the fork itself is the enforcement layer — all destructive, batch-operation, and non-essential tools are removed at the registration level. See the fork's README note below.)
+> **The most comprehensive MCP server for Coolify** - now hardened by the Orca internal fork to expose exactly 16 tools for managing your self-hosted PaaS through AI assistants. (Orca internal fork: the obot gateway hosting this server has no per-server tool filter, so the fork itself is the enforcement layer — all destructive, batch-operation, and non-essential tools are removed at the registration level. See the fork's README note below.)
 
 📖 **Docs**: [**coolify-mcp.stumason.dev**](https://coolify-mcp.stumason.dev) — install guide, quickstart, full tools reference, MCP primer, Coolify API gotchas, contributing guide, and the public v3 roadmap.
 
@@ -18,7 +18,7 @@ A Model Context Protocol (MCP) server for [Coolify](https://coolify.io/), enabli
 
 ## Features
 
-This MCP server provides **15 token-optimized tools** for **debugging, management, and deployment** (Orca internal fork — hardened to expose only these 15 tools; the obot gateway has no per-server tool filter, so this is the enforcement layer):
+This MCP server provides **16 token-optimized tools** for **debugging, management, and deployment** (Orca internal fork — hardened to expose only these 16 tools; the obot gateway has no per-server tool filter, so this is the enforcement layer):
 
 | Category           | Tools                                                                                                                        |
 | ------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -31,6 +31,7 @@ This MCP server provides **15 token-optimized tools** for **debugging, managemen
 | **Control**        | `control` (start/stop/restart for apps, databases, services)                                                                 |
 | **Env Vars**       | `env_vars` (CRUD + bulk_update for application, service, and database env vars)                                              |
 | **Deployments**    | `list_deployments`, `deploy`, `deployment` (get, cancel, list_for_app)                                                       |
+| **Artifacts**      | `artifact` (begin/append/commit/status proxy to the artifact deployer; needs `DEPLOYER_URL`)                                 |
 
 ### Token-Optimized Design
 
@@ -320,7 +321,7 @@ These tools accept human-friendly identifiers instead of just UUIDs:
 - **Context-Optimized**: Responses are 90-99% smaller than raw API, preventing context window exhaustion
 - **Smart Lookup**: Find apps by domain (`stuartmason.co.uk`), not just UUIDs
 - **Production Ready**: 98%+ test coverage, TypeScript strict mode, comprehensive error handling
-- **Hardened**: this fork exposes exactly 15 tools at the registration level — no delete/batch-ops/cloud-provisioning/docs-search surface, regardless of gateway configuration
+- **Hardened**: this fork exposes exactly 16 tools at the registration level — no delete/batch-ops/cloud-provisioning/docs-search surface, regardless of gateway configuration
 
 ## Related Links
 

@@ -15,6 +15,7 @@ import {
   type DatabaseSummary,
   type ServiceSummary,
 } from './coolify-client.js';
+import { DeployerClient } from './deployer-client.js';
 import type {
   CoolifyConfig,
   BuildPack,
@@ -266,10 +267,12 @@ interface DeployWaitResult {
 
 export class CoolifyMcpServer extends McpServer {
   private readonly client: CoolifyClient;
+  private readonly deployer?: DeployerClient;
 
   constructor(config: CoolifyConfig) {
     super({ name: 'coolify', version: VERSION });
     this.client = new CoolifyClient(config);
+    this.deployer = config.deployerUrl ? new DeployerClient(config.deployerUrl) : undefined;
     this.registerTools();
   }
 
@@ -855,6 +858,79 @@ export class CoolifyMcpServer extends McpServer {
             const { action: _, uuid: __, ...updateData } = args;
             return wrap(() => this.client.updateApplication(uuid, updateData));
           }
+        }
+      },
+    );
+
+    // =========================================================================
+    // Artifact deployer (1 tool) — strict schema: no b64 key, and unknown keys
+    // are rejected rather than silently dropped.
+    // =========================================================================
+    this.registerTool(
+      'artifact',
+      {
+        description:
+          'Deploy a static artifact via the artifact deployer: begin → append raw text parts (~20KB each) → commit → status',
+        inputSchema: z
+          .object({
+            action: z.enum(['begin', 'append', 'commit', 'status']),
+            name: z.string().optional(),
+            owner: z.string().optional(),
+            mode: z.enum(['create', 'update']).optional(),
+            upload_id: z.string().optional(),
+            path: z.string().optional(),
+            index: z.number().optional(),
+            total: z.number().optional(),
+            text: z.string().optional(),
+            deployment_uuid: z.string().optional(),
+          })
+          .strict(),
+      },
+      async (args) => {
+        const required = {
+          begin: ['name', 'owner', 'mode'],
+          append: ['upload_id', 'index', 'total', 'text'],
+          commit: ['upload_id'],
+          status: ['deployment_uuid'],
+        } as const;
+        const missing = required[args.action].filter(
+          (k) => (args as Record<string, unknown>)[k] === undefined,
+        );
+        if (missing.length > 0) {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: `Error: ${args.action} requires: ${missing.join(', ')}`,
+              },
+            ],
+          };
+        }
+        const deployer = this.deployer;
+        if (!deployer) {
+          return {
+            content: [{ type: 'text' as const, text: 'Error: DEPLOYER_URL not configured' }],
+          };
+        }
+        // Required fields were verified present above, hence the `!` assertions.
+        switch (args.action) {
+          case 'begin':
+            return wrap(() =>
+              deployer.begin({ name: args.name!, owner: args.owner!, mode: args.mode! }),
+            );
+          case 'append':
+            return wrap(() =>
+              deployer.append(args.upload_id!, {
+                path: args.path ?? 'index.html',
+                index: args.index!,
+                total: args.total!,
+                text: args.text!,
+              }),
+            );
+          case 'commit':
+            return wrap(() => deployer.commit(args.upload_id!));
+          case 'status':
+            return wrap(() => deployer.status(args.deployment_uuid!));
         }
       },
     );

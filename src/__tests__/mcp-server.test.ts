@@ -980,9 +980,151 @@ describe('CoolifyMcpServer v2', () => {
     });
   });
 
+  describe('artifact tool (artifact deployer proxy)', () => {
+    const DEPLOYER = 'http://deployer.test';
+    type Registered = {
+      handler: (args: Record<string, unknown>, extra: unknown) => Promise<unknown>;
+      inputSchema: { safeParse: (v: unknown) => { success: boolean } };
+    };
+    const getTool = (srv: CoolifyMcpServer): Registered =>
+      (srv as unknown as { _registeredTools: Record<string, Registered> })._registeredTools[
+        'artifact'
+      ];
+    const callArtifact = async (
+      srv: CoolifyMcpServer,
+      args: Record<string, unknown>,
+    ): Promise<string> => {
+      const res = (await getTool(srv).handler(args, {})) as { content: Array<{ text: string }> };
+      return res.content[0].text;
+    };
+    const jsonResponse = (status: number, body: unknown): Response =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+    let deployerServer: CoolifyMcpServer;
+    let fetchSpy: jest.SpiedFunction<typeof fetch>;
+
+    beforeEach(() => {
+      deployerServer = new CoolifyMcpServer({
+        baseUrl: 'http://localhost:3000',
+        accessToken: 'test-token',
+        deployerUrl: DEPLOYER,
+      });
+      fetchSpy = jest.spyOn(globalThis, 'fetch');
+    });
+
+    afterEach(() => {
+      fetchSpy.mockRestore();
+    });
+
+    it('rejects a b64 arg at validation and has no b64 key in the schema', () => {
+      const { inputSchema } = getTool(deployerServer);
+      const base = { action: 'append', upload_id: 'u1', index: 0, total: 1, text: 'x' };
+      expect(inputSchema.safeParse(base).success).toBe(true);
+      expect(inputSchema.safeParse({ ...base, b64: 'eA==' }).success).toBe(false);
+    });
+
+    it('begin -> append -> commit forwards bodies to the deployer routes', async () => {
+      fetchSpy
+        .mockResolvedValueOnce(jsonResponse(201, { upload_id: 'u1', expires_in_seconds: 900 }))
+        .mockResolvedValueOnce(jsonResponse(200, { path: 'index.html', received: 1, total: 2 }))
+        .mockResolvedValueOnce(
+          jsonResponse(202, {
+            url: 'https://x.tools.orca-internal.net',
+            app_uuid: 'a1',
+            deployment_uuid: 'd1',
+            commit_sha: 'abc',
+          }),
+        );
+
+      const begin = await callArtifact(deployerServer, {
+        action: 'begin',
+        name: 'x',
+        owner: 'me@orca.security',
+        mode: 'create',
+      });
+      expect(JSON.parse(begin).upload_id).toBe('u1');
+      await callArtifact(deployerServer, {
+        action: 'append',
+        upload_id: 'u1',
+        index: 0,
+        total: 2,
+        text: '<html>',
+      });
+      const commit = await callArtifact(deployerServer, { action: 'commit', upload_id: 'u1' });
+      expect(JSON.parse(commit).deployment_uuid).toBe('d1');
+
+      const calls = fetchSpy.mock.calls.map(([url, init]: [unknown, RequestInit?]) => ({
+        url: String(url),
+        method: (init as RequestInit).method,
+        body: JSON.parse((init as RequestInit).body as string),
+      }));
+      expect(calls).toEqual([
+        {
+          url: `${DEPLOYER}/v1/uploads`,
+          method: 'POST',
+          body: { name: 'x', owner: 'me@orca.security', mode: 'create' },
+        },
+        {
+          url: `${DEPLOYER}/v1/uploads/u1/parts`,
+          method: 'PUT',
+          body: { path: 'index.html', index: 0, total: 2, text: '<html>' },
+        },
+        { url: `${DEPLOYER}/v1/uploads/u1/commit`, method: 'POST', body: {} },
+      ]);
+    });
+
+    it('status GETs the deployment', async () => {
+      fetchSpy.mockResolvedValueOnce(jsonResponse(200, { status: 'finished' }));
+      const text = await callArtifact(deployerServer, { action: 'status', deployment_uuid: 'd1' });
+      expect(JSON.parse(text).status).toBe('finished');
+      const [url, init] = fetchSpy.mock.calls[0];
+      expect(String(url)).toBe(`${DEPLOYER}/v1/deployments/d1`);
+      expect((init as RequestInit).method).toBe('GET');
+    });
+
+    it('surfaces the deployer error and message verbatim', async () => {
+      fetchSpy.mockResolvedValueOnce(
+        jsonResponse(409, { error: 'name_taken', message: 'app x already exists' }),
+      );
+      const text = await callArtifact(deployerServer, {
+        action: 'begin',
+        name: 'x',
+        owner: 'me@orca.security',
+        mode: 'create',
+      });
+      expect(text).toContain('name_taken: app x already exists');
+    });
+
+    it('reports a network failure as deployer unreachable', async () => {
+      fetchSpy.mockRejectedValueOnce(new TypeError('connect ECONNREFUSED'));
+      const text = await callArtifact(deployerServer, { action: 'commit', upload_id: 'u1' });
+      expect(text).toContain(`deployer unreachable at ${DEPLOYER}: connect ECONNREFUSED`);
+    });
+
+    it.each([
+      ['begin', { name: 'x' }, 'owner, mode'],
+      ['append', { upload_id: 'u1', text: 't' }, 'index, total'],
+      ['commit', {}, 'upload_id'],
+      ['status', {}, 'deployment_uuid'],
+    ])('%s with missing args names them and makes no HTTP call', async (action, args, missing) => {
+      const text = await callArtifact(deployerServer, { action, ...args });
+      expect(text).toContain(missing);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('without DEPLOYER_URL returns a clear error and no HTTP call', async () => {
+      const text = await callArtifact(server, { action: 'commit', upload_id: 'u1' });
+      expect(text).toContain('DEPLOYER_URL not configured');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+  });
+
   describe('tool registry hardening (Orca fork — obot gateway has no tool filter)', () => {
     // The obot gateway that hosts this server turned out to have NO per-server
-    // tool filter, so the fork itself is the enforcement layer: only these 15
+    // tool filter, so the fork itself is the enforcement layer: only these 16
     // tools may ever be registered. This is an exact-set assertion (not just
     // absence checks) so that adding a new tool registration without updating
     // this allowlist fails loudly.
@@ -1002,14 +1144,15 @@ describe('CoolifyMcpServer v2', () => {
       'deployment',
       'env_vars',
       'control',
+      'artifact',
     ].sort();
 
-    it('registers exactly the 15 intended tools — no more, no less', () => {
+    it('registers exactly the 16 intended tools — no more, no less', () => {
       const registeredNames = Object.keys(
         (server as unknown as { _registeredTools: Record<string, unknown> })._registeredTools,
       ).sort();
 
-      expect(registeredNames).toHaveLength(15);
+      expect(registeredNames).toHaveLength(16);
       expect(registeredNames).toEqual(EXPECTED_TOOLS);
     });
   });

@@ -11,6 +11,7 @@ async function main(): Promise<void> {
   const config: CoolifyConfig = {
     baseUrl: process.env.COOLIFY_BASE_URL || 'http://localhost:3000',
     accessToken: process.env.COOLIFY_ACCESS_TOKEN || '',
+    deployerUrl: process.env.DEPLOYER_URL || undefined,
     customHeaders: Object.keys(customHeaders).length > 0 ? customHeaders : undefined,
   };
 
