@@ -26,4 +26,21 @@ describe('DeployerClient', () => {
       /^HTTP 502: x{200}$/,
     );
   });
+
+  it('gives the commit call a 600s timeout and every other call 120s', async () => {
+    jest
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(() => Promise.resolve(new Response('{}', { status: 200 })));
+    const timeout = jest.spyOn(AbortSignal, 'timeout');
+    const client = new DeployerClient('http://d.test');
+
+    await client.begin({ name: 'a', owner: 'o', mode: 'create' });
+    await client.append('u1', { path: 'index.html', index: 0, total: 1, text: 'x' });
+    await client.status('d1');
+    expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([120_000, 120_000, 120_000]);
+
+    timeout.mockClear();
+    await client.commit('u1');
+    expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([600_000]);
+  });
 });

@@ -5,6 +5,8 @@
  */
 
 const TIMEOUT_MS = 120_000;
+// Commit pushes to GitHub, creates the Coolify app and queues the deploy in one request.
+const COMMIT_TIMEOUT_MS = 600_000;
 
 export class DeployerClient {
   private readonly baseUrl: string;
@@ -25,21 +27,31 @@ export class DeployerClient {
   }
 
   commit(uploadId: string): Promise<unknown> {
-    return this.request('POST', `/v1/uploads/${encodeURIComponent(uploadId)}/commit`, {});
+    return this.request(
+      'POST',
+      `/v1/uploads/${encodeURIComponent(uploadId)}/commit`,
+      {},
+      COMMIT_TIMEOUT_MS,
+    );
   }
 
   status(deploymentUuid: string): Promise<unknown> {
     return this.request('GET', `/v1/deployments/${encodeURIComponent(deploymentUuid)}`);
   }
 
-  private async request(method: string, path: string, body?: unknown): Promise<unknown> {
+  private async request(
+    method: string,
+    path: string,
+    body?: unknown,
+    timeoutMs: number = TIMEOUT_MS,
+  ): Promise<unknown> {
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}${path}`, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: body === undefined ? undefined : JSON.stringify(body),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
