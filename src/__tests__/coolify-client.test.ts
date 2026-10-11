@@ -550,7 +550,7 @@ describe('CoolifyClient', () => {
       expect(result).toEqual({ message: 'Deployed' });
       expect(mockFetch).toHaveBeenCalledWith(
         'http://localhost:3000/api/v1/deploy?tag=my-tag&force=true',
-        expect.any(Object),
+        expect.objectContaining({ method: 'POST' }),
       );
     });
 

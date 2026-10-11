@@ -1221,7 +1221,8 @@ export class CoolifyClient {
     const param = this.isLikelyUuid(tagOrUuid) ? 'uuid' : 'tag';
     return this.request<DeployTriggerResponse>(
       `/deploy?${param}=${encodeURIComponent(tagOrUuid)}&force=${force}`,
-      { method: 'GET' },
+      // POST required from v4.2 and accepted long before it (`match(['get','post'])`).
+      { method: 'POST' },
     );
   }
 
