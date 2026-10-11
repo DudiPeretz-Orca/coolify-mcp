@@ -29,6 +29,8 @@ import type {
 const _require = createRequire(import.meta.url);
 export const VERSION: string = _require('../../package.json').version;
 
+type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
+
 /** Wrap handler with error handling */
 function wrap<T>(
   fn: () => Promise<T>,
@@ -877,49 +879,64 @@ export class CoolifyMcpServer extends McpServer {
             name: z.string().optional(),
             owner: z.string().optional(),
             mode: z.enum(['create', 'update']).optional(),
-            upload_id: z.string().optional(),
+            // Ids are interpolated into deployer URL paths; restrict the charset so
+            // `.`/`..` can never address other routes.
+            upload_id: z
+              .string()
+              .regex(/^[A-Za-z0-9_-]{1,64}$/)
+              .optional(),
             path: z.string().optional(),
-            index: z.number().optional(),
-            total: z.number().optional(),
+            index: z.number().int().nonnegative().optional(),
+            total: z.number().int().positive().optional(),
             text: z.string().optional(),
-            deployment_uuid: z.string().optional(),
+            deployment_uuid: z
+              .string()
+              .regex(/^[A-Za-z0-9]{1,64}$/)
+              .optional(),
           })
           .strict(),
       },
       async (args) => {
+        const errorResult = (text: string): ToolResult => ({
+          content: [{ type: 'text' as const, text }],
+          isError: true,
+        });
+        // Same shape as wrap(), but failures carry isError so the model can tell
+        // them from successes.
+        const run = (fn: () => Promise<unknown>): Promise<ToolResult> =>
+          fn().then(
+            (result) => ({
+              content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
+            }),
+            (error) =>
+              errorResult(`Error: ${error instanceof Error ? error.message : String(error)}`),
+          );
+
         const required = {
           begin: ['name', 'owner', 'mode'],
           append: ['upload_id', 'index', 'total', 'text'],
           commit: ['upload_id'],
           status: ['deployment_uuid'],
         } as const;
-        const missing = required[args.action].filter(
-          (k) => (args as Record<string, unknown>)[k] === undefined,
-        );
+        const missing = required[args.action].filter((k) => {
+          const v = (args as Record<string, unknown>)[k];
+          return v === undefined || v === '';
+        });
         if (missing.length > 0) {
-          return {
-            content: [
-              {
-                type: 'text' as const,
-                text: `Error: ${args.action} requires: ${missing.join(', ')}`,
-              },
-            ],
-          };
+          return errorResult(`Error: ${args.action} requires: ${missing.join(', ')}`);
         }
         const deployer = this.deployer;
         if (!deployer) {
-          return {
-            content: [{ type: 'text' as const, text: 'Error: DEPLOYER_URL not configured' }],
-          };
+          return errorResult('Error: DEPLOYER_URL not configured');
         }
         // Required fields were verified present above, hence the `!` assertions.
         switch (args.action) {
           case 'begin':
-            return wrap(() =>
+            return run(() =>
               deployer.begin({ name: args.name!, owner: args.owner!, mode: args.mode! }),
             );
           case 'append':
-            return wrap(() =>
+            return run(() =>
               deployer.append(args.upload_id!, {
                 path: args.path ?? 'index.html',
                 index: args.index!,
@@ -928,9 +945,9 @@ export class CoolifyMcpServer extends McpServer {
               }),
             );
           case 'commit':
-            return wrap(() => deployer.commit(args.upload_id!));
+            return run(() => deployer.commit(args.upload_id!));
           case 'status':
-            return wrap(() => deployer.status(args.deployment_uuid!));
+            return run(() => deployer.status(args.deployment_uuid!));
         }
       },
     );

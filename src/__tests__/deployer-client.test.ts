@@ -18,14 +18,12 @@ describe('DeployerClient', () => {
   });
 
   it('formats a non-JSON error body as HTTP <status>: <first 200 chars>', async () => {
+    // Fresh Response per call: a Response body can only be consumed once.
     jest
       .spyOn(globalThis, 'fetch')
-      .mockResolvedValue(new Response('x'.repeat(500), { status: 502 }));
+      .mockImplementation(() => Promise.resolve(new Response('x'.repeat(500), { status: 502 })));
     await expect(new DeployerClient('http://d.test').commit('u1')).rejects.toThrow(
-      `HTTP 502: ${'x'.repeat(200)}`,
-    );
-    await expect(new DeployerClient('http://d.test').commit('u1')).rejects.not.toThrow(
-      'x'.repeat(201),
+      /^HTTP 502: x{200}$/,
     );
   });
 });

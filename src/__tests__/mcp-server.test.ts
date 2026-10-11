@@ -990,6 +990,14 @@ describe('CoolifyMcpServer v2', () => {
       (srv as unknown as { _registeredTools: Record<string, Registered> })._registeredTools[
         'artifact'
       ];
+    const callArtifactRaw = async (
+      srv: CoolifyMcpServer,
+      args: Record<string, unknown>,
+    ): Promise<{ content: Array<{ text: string }>; isError?: boolean }> =>
+      (await getTool(srv).handler(args, {})) as {
+        content: Array<{ text: string }>;
+        isError?: boolean;
+      };
     const callArtifact = async (
       srv: CoolifyMcpServer,
       args: Record<string, unknown>,
@@ -1113,6 +1121,58 @@ describe('CoolifyMcpServer v2', () => {
       const text = await callArtifact(deployerServer, { action, ...args });
       expect(text).toContain(missing);
       expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['upload_id', 'commit', '..'],
+      ['upload_id', 'commit', 'a/b'],
+      ['deployment_uuid', 'status', '..'],
+      ['deployment_uuid', 'status', 'a-b'],
+    ])('rejects a path-traversal style %s (%s: %s)', (key, action, value) => {
+      const { inputSchema } = getTool(deployerServer);
+      expect(inputSchema.safeParse({ action, [key]: value }).success).toBe(false);
+      expect(inputSchema.safeParse({ action, [key]: 'abc123' }).success).toBe(true);
+    });
+
+    it.each([
+      ['index', 1.5],
+      ['index', -1],
+      ['total', 1.5],
+      ['total', 0],
+      ['total', -1],
+    ])('rejects %s = %s', (key, value) => {
+      const { inputSchema } = getTool(deployerServer);
+      const base = { action: 'append', upload_id: 'u1', index: 0, total: 1, text: 'x' };
+      expect(inputSchema.safeParse({ ...base, [key]: value }).success).toBe(false);
+    });
+
+    it('treats an empty string as a missing required arg', async () => {
+      const res = await callArtifactRaw(deployerServer, {
+        action: 'begin',
+        name: '',
+        owner: 'me@orca.security',
+        mode: 'create',
+      });
+      expect(res.content[0].text).toContain('name');
+      expect(res.isError).toBe(true);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('sets isError on failures only', async () => {
+      fetchSpy
+        .mockResolvedValueOnce(jsonResponse(409, { error: 'name_taken', message: 'm' }))
+        .mockResolvedValueOnce(jsonResponse(200, { status: 'finished' }));
+      const failed = await callArtifactRaw(deployerServer, {
+        action: 'status',
+        deployment_uuid: 'd1',
+      });
+      expect(failed.isError).toBe(true);
+      expect(failed.content[0].text).toBe('Error: name_taken: m');
+      const ok = await callArtifactRaw(deployerServer, { action: 'status', deployment_uuid: 'd1' });
+      expect(ok.isError).toBeUndefined();
+      expect((await callArtifactRaw(server, { action: 'commit', upload_id: 'u' })).isError).toBe(
+        true,
+      );
     });
 
     it('without DEPLOYER_URL returns a clear error and no HTTP call', async () => {
