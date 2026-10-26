@@ -868,6 +868,27 @@ export class CoolifyMcpServer extends McpServer {
     // Artifact deployer (1 tool) — strict schema: unknown keys are rejected
     // rather than silently dropped.
     // =========================================================================
+    // One predicate for the append payload rules, used by the schema refinement and
+    // by the handler, so validation and dispatch cannot disagree.
+    const appendPayload = (a: {
+      text?: string;
+      b64?: string;
+      sha256?: string;
+    }): { hasB64: boolean; error?: string } => {
+      const hasText = a.text !== undefined && a.text !== '';
+      const hasB64 = a.b64 !== undefined && a.b64 !== '';
+      if (hasText === hasB64) {
+        return {
+          hasB64,
+          error: "append requires exactly one of 'text' or ('b64' + 'sha256')",
+        };
+      }
+      if (hasB64 !== (a.sha256 !== undefined && a.sha256 !== '')) {
+        return { hasB64, error: "append requires both 'b64' and 'sha256' together" };
+      }
+      return { hasB64 };
+    };
+
     this.registerTool(
       'artifact',
       {
@@ -891,18 +912,40 @@ export class CoolifyMcpServer extends McpServer {
             text: z.string().optional(),
             // Path B parts: sandbox code produces b64 + sha256; the deployer rejects a
             // part whose bytes do not match. 349,528 base64 chars = 256 KB decoded.
-            b64: z.string().max(349_528).optional(),
+            // The 2 MB-per-file Path B cap is enforced by the deployer only (this
+            // proxy is stateless).
+            b64: z
+              .string()
+              .min(1)
+              .max(349_528)
+              .optional()
+              .describe('append only: base64 of one part (<=256 KB decoded); requires sha256'),
             sha256: z
               .string()
+              .min(1)
               .regex(/^[0-9a-f]{64}$/)
-              .optional(),
-            size: z.number().int().positive().max(10_485_760).optional(),
+              .optional()
+              .describe(
+                'append with b64: lowercase hex sha256 of the decoded part bytes; upload_url: of the whole file',
+              ),
+            size: z
+              .number()
+              .int()
+              .positive()
+              .max(10_485_760)
+              .optional()
+              .describe('upload_url only: file size in bytes (<=10 MB)'),
             deployment_uuid: z
               .string()
               .regex(/^[A-Za-z0-9]{1,64}$/)
               .optional(),
           })
-          .strict(),
+          .strict()
+          .superRefine((a, ctx) => {
+            if (a.action !== 'append') return;
+            const { error } = appendPayload(a);
+            if (error) ctx.addIssue({ code: 'custom', message: error });
+          }),
       },
       async (args) => {
         const errorResult = (text: string): ToolResult => ({
@@ -934,18 +977,11 @@ export class CoolifyMcpServer extends McpServer {
         if (missing.length > 0) {
           return errorResult(`Error: ${args.action} requires: ${missing.join(', ')}`);
         }
-        if (args.action === 'append') {
-          const hasText = args.text !== undefined && args.text !== '';
-          const hasB64 = args.b64 !== undefined && args.b64 !== '';
-          const hasSha = args.sha256 !== undefined;
-          if (hasText === hasB64) {
-            return errorResult(
-              "Error: append requires exactly one of 'text' or ('b64' + 'sha256')",
-            );
-          }
-          if (hasB64 !== hasSha) {
-            return errorResult("Error: append requires both 'b64' and 'sha256' together");
-          }
+        // The schema refinement already rejects bad combinations; re-check so a
+        // direct handler call cannot bypass it.
+        const payload = args.action === 'append' ? appendPayload(args) : { hasB64: false };
+        if ('error' in payload && payload.error) {
+          return errorResult(`Error: ${payload.error}`);
         }
         const deployer = this.deployer;
         if (!deployer) {
@@ -966,8 +1002,8 @@ export class CoolifyMcpServer extends McpServer {
               };
               return deployer.append(
                 args.upload_id!,
-                args.b64 !== undefined
-                  ? { ...part, b64: args.b64, sha256: args.sha256! }
+                payload.hasB64
+                  ? { ...part, b64: args.b64!, sha256: args.sha256! }
                   : { ...part, text: args.text! },
               );
             });
