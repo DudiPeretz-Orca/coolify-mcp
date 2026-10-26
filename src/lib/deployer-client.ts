@@ -1,7 +1,8 @@
 /**
  * HTTP client for the artifact deployer service.
- * Lets a claude.ai session push a large HTML page as raw-text parts, so the
- * model never has to base64-encode it.
+ * Lets a claude.ai session push a large HTML page as raw-text parts, or binary
+ * files via a presigned URL (sandbox uploads) or checksummed base64 parts, so
+ * the model never encodes file bytes itself.
  */
 
 const TIMEOUT_MS = 120_000;
@@ -21,9 +22,18 @@ export class DeployerClient {
 
   append(
     uploadId: string,
-    body: { path: string; index: number; total: number; text: string },
+    body:
+      | { path: string; index: number; total: number; text: string }
+      | { path: string; index: number; total: number; b64: string; sha256: string },
   ): Promise<unknown> {
     return this.request('PUT', `/v1/uploads/${encodeURIComponent(uploadId)}/parts`, body);
+  }
+
+  uploadUrl(
+    uploadId: string,
+    body: { path: string; size: number; sha256: string },
+  ): Promise<unknown> {
+    return this.request('POST', `/v1/uploads/${encodeURIComponent(uploadId)}/remote`, body);
   }
 
   commit(uploadId: string): Promise<unknown> {

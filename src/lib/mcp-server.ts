@@ -865,17 +865,17 @@ export class CoolifyMcpServer extends McpServer {
     );
 
     // =========================================================================
-    // Artifact deployer (1 tool) — strict schema: no b64 key, and unknown keys
-    // are rejected rather than silently dropped.
+    // Artifact deployer (1 tool) — strict schema: unknown keys are rejected
+    // rather than silently dropped.
     // =========================================================================
     this.registerTool(
       'artifact',
       {
         description:
-          'Deploy a static artifact via the artifact deployer: begin → append raw text parts (~20KB each) → commit → status',
+          'Deploy a static artifact via the artifact deployer: begin → append text parts (~20KB) or upload_url for binary files (sandbox uploads the bytes) → commit → status',
         inputSchema: z
           .object({
-            action: z.enum(['begin', 'append', 'commit', 'status']),
+            action: z.enum(['begin', 'append', 'upload_url', 'commit', 'status']),
             name: z.string().optional(),
             owner: z.string().optional(),
             mode: z.enum(['create', 'update']).optional(),
@@ -889,6 +889,14 @@ export class CoolifyMcpServer extends McpServer {
             index: z.number().int().nonnegative().optional(),
             total: z.number().int().positive().optional(),
             text: z.string().optional(),
+            // Path B parts: sandbox code produces b64 + sha256; the deployer rejects a
+            // part whose bytes do not match. 349,528 base64 chars = 256 KB decoded.
+            b64: z.string().max(349_528).optional(),
+            sha256: z
+              .string()
+              .regex(/^[0-9a-f]{64}$/)
+              .optional(),
+            size: z.number().int().positive().max(10_485_760).optional(),
             deployment_uuid: z
               .string()
               .regex(/^[A-Za-z0-9]{1,64}$/)
@@ -914,7 +922,8 @@ export class CoolifyMcpServer extends McpServer {
 
         const required = {
           begin: ['name', 'owner', 'mode'],
-          append: ['upload_id', 'index', 'total', 'text'],
+          append: ['upload_id', 'index', 'total'],
+          upload_url: ['upload_id', 'path', 'size', 'sha256'],
           commit: ['upload_id'],
           status: ['deployment_uuid'],
         } as const;
@@ -924,6 +933,19 @@ export class CoolifyMcpServer extends McpServer {
         });
         if (missing.length > 0) {
           return errorResult(`Error: ${args.action} requires: ${missing.join(', ')}`);
+        }
+        if (args.action === 'append') {
+          const hasText = args.text !== undefined && args.text !== '';
+          const hasB64 = args.b64 !== undefined && args.b64 !== '';
+          const hasSha = args.sha256 !== undefined;
+          if (hasText === hasB64) {
+            return errorResult(
+              "Error: append requires exactly one of 'text' or ('b64' + 'sha256')",
+            );
+          }
+          if (hasB64 !== hasSha) {
+            return errorResult("Error: append requires both 'b64' and 'sha256' together");
+          }
         }
         const deployer = this.deployer;
         if (!deployer) {
@@ -936,12 +958,25 @@ export class CoolifyMcpServer extends McpServer {
               deployer.begin({ name: args.name!, owner: args.owner!, mode: args.mode! }),
             );
           case 'append':
-            return run(() =>
-              deployer.append(args.upload_id!, {
+            return run(() => {
+              const part = {
                 path: args.path ?? 'index.html',
                 index: args.index!,
                 total: args.total!,
-                text: args.text!,
+              };
+              return deployer.append(
+                args.upload_id!,
+                args.b64 !== undefined
+                  ? { ...part, b64: args.b64, sha256: args.sha256! }
+                  : { ...part, text: args.text! },
+              );
+            });
+          case 'upload_url':
+            return run(() =>
+              deployer.uploadUrl(args.upload_id!, {
+                path: args.path!,
+                size: args.size!,
+                sha256: args.sha256!,
               }),
             );
           case 'commit':

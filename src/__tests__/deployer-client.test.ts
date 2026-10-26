@@ -37,7 +37,8 @@ describe('DeployerClient', () => {
     await client.begin({ name: 'a', owner: 'o', mode: 'create' });
     await client.append('u1', { path: 'index.html', index: 0, total: 1, text: 'x' });
     await client.status('d1');
-    expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([120_000, 120_000, 120_000]);
+    await client.uploadUrl('u1', { path: 'a.png', size: 1, sha256: 'a'.repeat(64) });
+    expect(timeout.mock.calls.map(([ms]) => ms)).toEqual([120_000, 120_000, 120_000, 120_000]);
 
     timeout.mockClear();
     await client.commit('u1');

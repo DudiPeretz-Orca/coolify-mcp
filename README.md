@@ -31,7 +31,7 @@ This MCP server provides **16 token-optimized tools** for **debugging, managemen
 | **Control**        | `control` (start/stop/restart for apps, databases, services)                                                                 |
 | **Env Vars**       | `env_vars` (CRUD + bulk_update for application, service, and database env vars)                                              |
 | **Deployments**    | `list_deployments`, `deploy`, `deployment` (get, cancel, list_for_app)                                                       |
-| **Artifacts**      | `artifact` (begin/append/commit/status proxy to the artifact deployer; needs `DEPLOYER_URL`)                                 |
+| **Artifacts**      | `artifact` (begin/append/upload_url/commit/status proxy to the artifact deployer; needs `DEPLOYER_URL`)                      |
 
 ### Token-Optimized Design
 

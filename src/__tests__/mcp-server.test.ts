@@ -1027,11 +1027,156 @@ describe('CoolifyMcpServer v2', () => {
       fetchSpy.mockRestore();
     });
 
-    it('rejects a b64 arg at validation and has no b64 key in the schema', () => {
+    const SHA = 'a'.repeat(64);
+
+    it('keeps the schema strict: unknown keys are rejected', () => {
       const { inputSchema } = getTool(deployerServer);
       const base = { action: 'append', upload_id: 'u1', index: 0, total: 1, text: 'x' };
       expect(inputSchema.safeParse(base).success).toBe(true);
-      expect(inputSchema.safeParse({ ...base, b64: 'eA==' }).success).toBe(false);
+      expect(inputSchema.safeParse({ ...base, bogus: 'eA==' }).success).toBe(false);
+    });
+
+    it('upload_url forwards body to POST /v1/uploads/{id}/remote', async () => {
+      const reply = { url: 'https://s3.test/b', fields: { key: 'k' }, expires_in: 900 };
+      fetchSpy.mockResolvedValueOnce(jsonResponse(200, reply));
+      const res = await callArtifactRaw(deployerServer, {
+        action: 'upload_url',
+        upload_id: 'u1',
+        path: 'img/a.png',
+        size: 1234,
+        sha256: SHA,
+      });
+      expect(res.isError).toBeUndefined();
+      expect(JSON.parse(res.content[0].text)).toEqual(reply);
+      const [url, init] = fetchSpy.mock.calls[0];
+      expect(String(url)).toBe(`${DEPLOYER}/v1/uploads/u1/remote`);
+      expect((init as RequestInit).method).toBe('POST');
+      expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+        path: 'img/a.png',
+        size: 1234,
+        sha256: SHA,
+      });
+    });
+
+    it('upload_url validates sha256 and size', async () => {
+      const { inputSchema } = getTool(deployerServer);
+      const base = { action: 'upload_url', upload_id: 'u1', path: 'a.png', size: 10, sha256: SHA };
+      expect(inputSchema.safeParse(base).success).toBe(true);
+      expect(inputSchema.safeParse({ ...base, size: 10_485_760 }).success).toBe(true);
+      for (const bad of [
+        { sha256: 'A'.repeat(64) },
+        { sha256: 'a'.repeat(63) },
+        { sha256: 'a'.repeat(65) },
+        { sha256: 'g'.repeat(64) },
+        { size: 0 },
+        { size: -1 },
+        { size: 1.5 },
+        { size: 10_485_761 },
+      ]) {
+        expect(inputSchema.safeParse({ ...base, ...bad }).success).toBe(false);
+      }
+      for (const key of ['path', 'size', 'sha256', 'upload_id']) {
+        const args: Record<string, unknown> = { ...base };
+        delete args[key];
+        const res = await callArtifactRaw(deployerServer, args);
+        expect(res.isError).toBe(true);
+        expect(res.content[0].text).toContain(key);
+      }
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('append rejects b64 without sha256', async () => {
+      const res = await callArtifactRaw(deployerServer, {
+        action: 'append',
+        upload_id: 'u1',
+        index: 0,
+        total: 1,
+        b64: 'eA==',
+      });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain('sha256');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('append rejects sha256 without b64', async () => {
+      const res = await callArtifactRaw(deployerServer, {
+        action: 'append',
+        upload_id: 'u1',
+        index: 0,
+        total: 1,
+        sha256: SHA,
+      });
+      expect(res.isError).toBe(true);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('append rejects text with b64', async () => {
+      const res = await callArtifactRaw(deployerServer, {
+        action: 'append',
+        upload_id: 'u1',
+        index: 0,
+        total: 1,
+        text: 'x',
+        b64: 'eA==',
+        sha256: SHA,
+      });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toContain('exactly one');
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('append forwards b64+sha256', async () => {
+      fetchSpy.mockResolvedValueOnce(jsonResponse(200, { path: 'a.png', received: 1, total: 2 }));
+      const res = await callArtifactRaw(deployerServer, {
+        action: 'append',
+        upload_id: 'u1',
+        path: 'a.png',
+        index: 0,
+        total: 2,
+        b64: 'eA==',
+        sha256: SHA,
+      });
+      expect(res.isError).toBeUndefined();
+      const [url, init] = fetchSpy.mock.calls[0];
+      expect(String(url)).toBe(`${DEPLOYER}/v1/uploads/u1/parts`);
+      expect((init as RequestInit).method).toBe('PUT');
+      expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+        path: 'a.png',
+        index: 0,
+        total: 2,
+        b64: 'eA==',
+        sha256: SHA,
+      });
+    });
+
+    it('append rejects oversize b64 and a malformed sha256', () => {
+      const { inputSchema } = getTool(deployerServer);
+      const base = {
+        action: 'append',
+        upload_id: 'u1',
+        index: 0,
+        total: 1,
+        b64: 'A'.repeat(349_528),
+        sha256: SHA,
+      };
+      expect(inputSchema.safeParse(base).success).toBe(true);
+      expect(inputSchema.safeParse({ ...base, b64: 'A'.repeat(349_529) }).success).toBe(false);
+      expect(inputSchema.safeParse({ ...base, sha256: 'XYZ' }).success).toBe(false);
+    });
+
+    it.each([
+      ['part_checksum', 422],
+      ['remote_missing', 422],
+      ['remote_mismatch', 422],
+      ['too_large', 413],
+      ['uploads_disabled', 503],
+      ['busy', 503],
+      ['s3_error', 502],
+    ])('surfaces deployer code %s verbatim with isError', async (code, status) => {
+      fetchSpy.mockResolvedValueOnce(jsonResponse(status, { error: code, message: 'm' }));
+      const res = await callArtifactRaw(deployerServer, { action: 'commit', upload_id: 'u1' });
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toBe(`Error: ${code}: m`);
     });
 
     it('begin -> append -> commit forwards bodies to the deployer routes', async () => {
