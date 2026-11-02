@@ -285,7 +285,6 @@ export interface CreateApplicationPublicRequest {
   health_check_timeout?: number;
   health_check_retries?: number;
   health_check_start_period?: number;
-  custom_docker_run_options?: string;
   custom_labels?: string;
   instant_deploy?: boolean;
 }
@@ -323,7 +322,6 @@ export interface CreateApplicationDockerfileRequest {
   ports_exposes?: string;
   ports_mappings?: string;
   base_directory?: string;
-  custom_docker_run_options?: string;
   custom_labels?: string;
   instant_deploy?: boolean;
 }
@@ -355,7 +353,6 @@ export interface CreateApplicationDockerImageRequest {
   health_check_timeout?: number;
   health_check_retries?: number;
   health_check_start_period?: number;
-  custom_docker_run_options?: string;
   custom_labels?: string;
   instant_deploy?: boolean;
 }
@@ -374,7 +371,6 @@ export interface CreateApplicationDockerComposeRequest {
   docker_compose_location?: string;
   docker_compose_custom_start_command?: string;
   docker_compose_custom_build_command?: string;
-  custom_docker_run_options?: string;
   custom_labels?: string;
   instant_deploy?: boolean;
 }
@@ -384,7 +380,6 @@ export interface UpdateApplicationRequest {
   description?: string;
   fqdn?: string;
   domains?: string;
-  custom_docker_run_options?: string;
   custom_labels?: string;
   git_repository?: string;
   git_branch?: string;

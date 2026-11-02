@@ -534,70 +534,78 @@ export class CoolifyMcpServer extends McpServer {
         ),
     );
 
+    // Hoisted so the `update` handler can build its PATCH body from exactly these keys.
+    // `custom_docker_run_options` (raw `docker run` flags: --privileged, --cap-add, --device)
+    // is deliberately NOT part of this shape and must never be added: it would let any
+    // connector user run a privileged container on the shared host.
+    const applicationShape = {
+      action: z.enum([
+        'create_public',
+        'create_github',
+        'create_key',
+        'create_dockerimage',
+        'create_dockerfile',
+        'update',
+      ]),
+      uuid: z.string().optional(),
+      // Create fields
+      project_uuid: z.string().optional(),
+      server_uuid: z.string().optional(),
+      github_app_uuid: z.string().optional(),
+      private_key_uuid: z.string().optional(),
+      destination_uuid: z.string().optional(),
+      git_repository: z.string().optional(),
+      git_branch: z.string().optional(),
+      environment_name: z.string().optional(),
+      environment_uuid: z.string().optional(),
+      build_pack: z.string().optional(),
+      ports_exposes: z.string().optional(),
+      // Docker image fields
+      docker_registry_image_name: z.string().optional(),
+      docker_registry_image_tag: z.string().optional(),
+      // Dockerfile fields (create_dockerfile)
+      dockerfile: z.string().optional(),
+      // Update fields
+      name: z.string().optional(),
+      description: z.string().optional(),
+      fqdn: z.string().optional(),
+      domains: z.string().optional(),
+      custom_labels: z.string().optional(),
+      instant_deploy: z.boolean().optional(),
+      // Health check fields
+      health_check_enabled: z.boolean().optional(),
+      health_check_path: z.string().optional(),
+      health_check_port: z.number().optional(),
+      health_check_host: z.string().optional(),
+      health_check_method: z.string().optional(),
+      health_check_return_code: z.number().optional(),
+      health_check_scheme: z.string().optional(),
+      health_check_response_text: z.string().optional(),
+      health_check_interval: z.number().optional(),
+      health_check_timeout: z.number().optional(),
+      health_check_retries: z.number().optional(),
+      health_check_start_period: z.number().optional(),
+      // Build configuration fields (accepted on create_public/github/key + update;
+      // create_dockerimage ignores these — pre-built image, no build step)
+      base_directory: z.string().optional(),
+      publish_directory: z.string().optional(),
+      install_command: z.string().optional(),
+      build_command: z.string().optional(),
+      start_command: z.string().optional(),
+      dockerfile_location: z.string().optional(),
+      watch_paths: z.string().optional(),
+      // Update-only: Coolify strips dockerfile_target_build on every create endpoint
+      // (controller $allowedFields line 1014) but accepts on PATCH (line 2497).
+      dockerfile_target_build: z.string().optional(),
+    };
+    const UPDATABLE_APPLICATION_FIELDS = Object.keys(applicationShape).filter(
+      (k) => k !== 'action' && k !== 'uuid',
+    );
+
     this.tool(
       'application',
       'Manage app: create/update (delete unavailable — use the Coolify dashboard)',
-      {
-        action: z.enum([
-          'create_public',
-          'create_github',
-          'create_key',
-          'create_dockerimage',
-          'create_dockerfile',
-          'update',
-        ]),
-        uuid: z.string().optional(),
-        // Create fields
-        project_uuid: z.string().optional(),
-        server_uuid: z.string().optional(),
-        github_app_uuid: z.string().optional(),
-        private_key_uuid: z.string().optional(),
-        destination_uuid: z.string().optional(),
-        git_repository: z.string().optional(),
-        git_branch: z.string().optional(),
-        environment_name: z.string().optional(),
-        environment_uuid: z.string().optional(),
-        build_pack: z.string().optional(),
-        ports_exposes: z.string().optional(),
-        // Docker image fields
-        docker_registry_image_name: z.string().optional(),
-        docker_registry_image_tag: z.string().optional(),
-        // Dockerfile fields (create_dockerfile)
-        dockerfile: z.string().optional(),
-        // Update fields
-        name: z.string().optional(),
-        description: z.string().optional(),
-        fqdn: z.string().optional(),
-        domains: z.string().optional(),
-        custom_docker_run_options: z.string().optional(),
-        custom_labels: z.string().optional(),
-        instant_deploy: z.boolean().optional(),
-        // Health check fields
-        health_check_enabled: z.boolean().optional(),
-        health_check_path: z.string().optional(),
-        health_check_port: z.number().optional(),
-        health_check_host: z.string().optional(),
-        health_check_method: z.string().optional(),
-        health_check_return_code: z.number().optional(),
-        health_check_scheme: z.string().optional(),
-        health_check_response_text: z.string().optional(),
-        health_check_interval: z.number().optional(),
-        health_check_timeout: z.number().optional(),
-        health_check_retries: z.number().optional(),
-        health_check_start_period: z.number().optional(),
-        // Build configuration fields (accepted on create_public/github/key + update;
-        // create_dockerimage ignores these — pre-built image, no build step)
-        base_directory: z.string().optional(),
-        publish_directory: z.string().optional(),
-        install_command: z.string().optional(),
-        build_command: z.string().optional(),
-        start_command: z.string().optional(),
-        dockerfile_location: z.string().optional(),
-        watch_paths: z.string().optional(),
-        // Update-only: Coolify strips dockerfile_target_build on every create endpoint
-        // (controller $allowedFields line 1014) but accepts on PATCH (line 2497).
-        dockerfile_target_build: z.string().optional(),
-      },
+      applicationShape,
       async (args) => {
         const { action, uuid } = args;
         switch (action) {
@@ -653,7 +661,6 @@ export class CoolifyMcpServer extends McpServer {
                 health_check_timeout: args.health_check_timeout,
                 health_check_retries: args.health_check_retries,
                 health_check_start_period: args.health_check_start_period,
-                custom_docker_run_options: args.custom_docker_run_options,
                 custom_labels: args.custom_labels,
                 instant_deploy: args.instant_deploy,
               }),
@@ -710,7 +717,6 @@ export class CoolifyMcpServer extends McpServer {
                 health_check_timeout: args.health_check_timeout,
                 health_check_retries: args.health_check_retries,
                 health_check_start_period: args.health_check_start_period,
-                custom_docker_run_options: args.custom_docker_run_options,
                 custom_labels: args.custom_labels,
                 instant_deploy: args.instant_deploy,
               }),
@@ -767,7 +773,6 @@ export class CoolifyMcpServer extends McpServer {
                 health_check_timeout: args.health_check_timeout,
                 health_check_retries: args.health_check_retries,
                 health_check_start_period: args.health_check_start_period,
-                custom_docker_run_options: args.custom_docker_run_options,
                 custom_labels: args.custom_labels,
                 instant_deploy: args.instant_deploy,
               }),
@@ -817,7 +822,6 @@ export class CoolifyMcpServer extends McpServer {
                 health_check_timeout: args.health_check_timeout,
                 health_check_retries: args.health_check_retries,
                 health_check_start_period: args.health_check_start_period,
-                custom_docker_run_options: args.custom_docker_run_options,
                 custom_labels: args.custom_labels,
                 instant_deploy: args.instant_deploy,
               }),
@@ -848,7 +852,6 @@ export class CoolifyMcpServer extends McpServer {
                 description: args.description,
                 fqdn: args.fqdn,
                 domains: args.domains,
-                custom_docker_run_options: args.custom_docker_run_options,
                 custom_labels: args.custom_labels,
                 instant_deploy: args.instant_deploy,
               }),
@@ -856,8 +859,13 @@ export class CoolifyMcpServer extends McpServer {
           case 'update': {
             if (!uuid)
               return { content: [{ type: 'text' as const, text: 'Error: uuid required' }] };
-            // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            const { action: _, uuid: __, ...updateData } = args;
+            // Allowlist, not a spread: only schema-declared fields can reach the PATCH body,
+            // even if a caller bypasses zod validation.
+            const updateData = Object.fromEntries(
+              Object.entries(args).filter(
+                ([k, v]) => UPDATABLE_APPLICATION_FIELDS.includes(k) && v !== undefined,
+              ),
+            );
             return wrap(() => this.client.updateApplication(uuid, updateData));
           }
         }
