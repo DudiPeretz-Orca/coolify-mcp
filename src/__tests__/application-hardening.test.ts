@@ -74,7 +74,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
       .filter(([, init]) => init?.method && init.method !== 'GET')
       .map(([, init]) => String(init?.body ?? ''));
 
-  const callApplication = (args: Record<string, unknown>) =>
+  const callApplication = (args: Record<string, unknown>): ReturnType<Client['callTool']> =>
     client.callTool({ name: 'application', arguments: args });
 
   it('tools/list returns exactly the 16 allow-listed tools', async () => {
