@@ -183,6 +183,13 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
       ports_mappings: '22:22',
       docker_compose_raw: 'x',
       custom_nginx_configuration: 'x',
+      pre_deployment_command: 'x',
+      post_deployment_command: 'x',
+      redirect: 'www',
+      force_domain_override: true,
+      limits_memory: '1g',
+      connect_to_docker_network: true,
+      is_container_label_readonly_enabled: false,
     });
     expect(JSON.parse(writeBodies()[0])).toEqual({ name: 'renamed' });
   });
