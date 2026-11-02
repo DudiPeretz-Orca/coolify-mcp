@@ -110,28 +110,6 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
       },
     ],
     [
-      'create_github',
-      {
-        action: 'create_github',
-        project_uuid: 'p',
-        server_uuid: 's',
-        github_app_uuid: 'g',
-        git_repository: 'o/r',
-        git_branch: 'main',
-      },
-    ],
-    [
-      'create_key',
-      {
-        action: 'create_key',
-        project_uuid: 'p',
-        server_uuid: 's',
-        private_key_uuid: 'k',
-        git_repository: 'o/r',
-        git_branch: 'main',
-      },
-    ],
-    [
       'create_dockerimage',
       {
         action: 'create_dockerimage',
@@ -227,7 +205,6 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
       uuid: 'app-uuid',
       name: 'n',
       domains: 'https://a.tools.orca-internal.net',
-      custom_labels: 'dHJhZWZpaw==',
       health_check_enabled: true,
       health_check_port: 3000,
       dockerfile_target_build: 'worker',
@@ -237,11 +214,223 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     expect(JSON.parse(bodies[0])).toEqual({
       name: 'n',
       domains: 'https://a.tools.orca-internal.net',
-      custom_labels: 'dHJhZWZpaw==',
       health_check_enabled: true,
       health_check_port: 3000,
       dockerfile_target_build: 'worker',
       watch_paths: 'apps/api/**',
+    });
+  });
+
+  // ---- Second hardening round: custom_labels, github_app_uuid, private_key_uuid, control ----
+
+  const REMOVED_FIELDS = ['custom_labels', 'github_app_uuid', 'private_key_uuid'];
+  const REMOVED_VALUES: Record<string, string> = {
+    custom_labels: 'dHJhZWZpay5odHRwLnJvdXRlcnMueC5ydWxlPUhvc3QoYHZpY3RpbWAp',
+    github_app_uuid: 'gh-app-uuid-sentinel',
+    private_key_uuid: 'private-key-uuid-sentinel',
+  };
+
+  it('the application schema advertises none of custom_labels, github_app_uuid, private_key_uuid', async () => {
+    const { tools } = await client.listTools();
+    const app = tools.find((t) => t.name === 'application')!;
+    const props = Object.keys((app.inputSchema as { properties: object }).properties);
+    for (const f of REMOVED_FIELDS) {
+      expect(props).not.toContain(f);
+    }
+    const serialized = JSON.stringify(tools);
+    for (const f of REMOVED_FIELDS) {
+      expect(serialized).not.toContain(f);
+    }
+  });
+
+  it('the application action enum no longer offers create_github or create_key', async () => {
+    const { tools } = await client.listTools();
+    const app = tools.find((t) => t.name === 'application')!;
+    const action = (app.inputSchema as unknown as { properties: { action: { enum: string[] } } })
+      .properties.action.enum;
+    expect(action).toEqual(['create_public', 'create_dockerimage', 'create_dockerfile', 'update']);
+  });
+
+  it.each(['create_github', 'create_key'])(
+    '%s is rejected and sends no request to Coolify',
+    async (action) => {
+      const result = await callApplication({
+        action,
+        project_uuid: 'p',
+        server_uuid: 's',
+        git_repository: 'o/r',
+        git_branch: 'main',
+        github_app_uuid: REMOVED_VALUES.github_app_uuid,
+        private_key_uuid: REMOVED_VALUES.private_key_uuid,
+      });
+      expect(result.isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(createCases)(
+    '%s never puts custom_labels, github_app_uuid or private_key_uuid in the body',
+    async (_name, base) => {
+      await callApplication({ ...base, ...REMOVED_VALUES });
+      const bodies = writeBodies();
+      expect(bodies).toHaveLength(1);
+      for (const f of REMOVED_FIELDS) {
+        expect(bodies[0]).not.toContain(f);
+        expect(bodies[0]).not.toContain(REMOVED_VALUES[f]);
+      }
+    },
+  );
+
+  it('update never puts custom_labels, github_app_uuid or private_key_uuid in the PATCH body', async () => {
+    await callApplication({
+      action: 'update',
+      uuid: 'app-uuid',
+      name: 'renamed',
+      ...REMOVED_VALUES,
+    });
+    expect(JSON.parse(writeBodies()[0])).toEqual({ name: 'renamed' });
+  });
+
+  it('update handler with zod bypassed still drops the removed fields', async () => {
+    const tool = (
+      server as unknown as {
+        _registeredTools: Record<
+          string,
+          { handler: (a: Record<string, unknown>, extra: unknown) => Promise<unknown> }
+        >;
+      }
+    )._registeredTools['application'];
+    await tool.handler({ action: 'update', uuid: 'app-uuid', name: 'x', ...REMOVED_VALUES }, {});
+    expect(JSON.parse(writeBodies()[0])).toEqual({ name: 'x' });
+  });
+
+  describe('control only acts on applications', () => {
+    const callControl = (args: Record<string, unknown>): ReturnType<Client['callTool']> =>
+      client.callTool({ name: 'control', arguments: args });
+
+    it('schema offers only resource=application', async () => {
+      const { tools } = await client.listTools();
+      const control = tools.find((t) => t.name === 'control')!;
+      const resource = (
+        control.inputSchema as unknown as { properties: { resource: { enum: string[] } } }
+      ).properties.resource.enum;
+      expect(resource).toEqual(['application']);
+      expect(JSON.stringify(control)).not.toContain('pull_latest');
+    });
+
+    it.each(['database', 'service'])(
+      'resource=%s is rejected with no request',
+      async (resource) => {
+        const result = await callControl({ resource, action: 'stop', uuid: 'u' });
+        expect(result.isError).toBe(true);
+        expect(mockFetch).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(['database', 'service'])(
+      'handler called directly (zod bypassed) with resource=%s sends no request',
+      async (resource) => {
+        const tool = (
+          server as unknown as {
+            _registeredTools: Record<
+              string,
+              { handler: (a: Record<string, unknown>, extra: unknown) => Promise<unknown> }
+            >;
+          }
+        )._registeredTools['control'];
+        await tool.handler({ resource, action: 'restart', uuid: 'u' }, {});
+        expect(mockFetch).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      ['start', '/applications/app-uuid/start'],
+      ['stop', '/applications/app-uuid/stop'],
+      ['restart', '/applications/app-uuid/restart'],
+    ])('application %s still works', async (action, path) => {
+      const result = await callControl({ resource: 'application', action, uuid: 'app-uuid' });
+      expect(result.isError).toBeFalsy();
+      const urls = mockFetch.mock.calls.map(([u]) => String(u));
+      expect(urls.some((u) => u.endsWith(path))).toBe(true);
+    });
+  });
+
+  describe('legitimate flows still work', () => {
+    it('create_public with domains, health checks and build config', async () => {
+      await callApplication({
+        action: 'create_public',
+        project_uuid: 'p',
+        server_uuid: 's',
+        git_repository: 'https://github.com/o/r',
+        git_branch: 'main',
+        build_pack: 'nixpacks',
+        ports_exposes: '3000',
+        domains: 'https://app.tools.orca-internal.net',
+        base_directory: '/apps/api',
+        health_check_enabled: true,
+        health_check_path: '/health',
+      });
+      expect(JSON.parse(writeBodies()[0])).toMatchObject({
+        git_repository: 'https://github.com/o/r',
+        domains: 'https://app.tools.orca-internal.net',
+        base_directory: '/apps/api',
+        health_check_enabled: true,
+        health_check_path: '/health',
+      });
+    });
+
+    it('create_dockerfile with domains', async () => {
+      await callApplication({
+        action: 'create_dockerfile',
+        project_uuid: 'p',
+        server_uuid: 's',
+        dockerfile: 'FROM nginx',
+        ports_exposes: '80',
+        domains: 'https://site.tools.orca-internal.net',
+        instant_deploy: true,
+      });
+      expect(JSON.parse(writeBodies()[0])).toMatchObject({
+        domains: 'https://site.tools.orca-internal.net',
+        ports_exposes: '80',
+        instant_deploy: true,
+      });
+    });
+
+    it('update with domains', async () => {
+      await callApplication({
+        action: 'update',
+        uuid: 'app-uuid',
+        domains: 'https://app.tools.orca-internal.net',
+      });
+      expect(JSON.parse(writeBodies()[0])).toEqual({
+        domains: 'https://app.tools.orca-internal.net',
+      });
+    });
+
+    it('env_vars create on an application', async () => {
+      const result = await client.callTool({
+        name: 'env_vars',
+        arguments: {
+          resource: 'application',
+          action: 'create',
+          uuid: 'app-uuid',
+          key: 'FOO',
+          value: 'bar',
+        },
+      });
+      expect(result.isError).toBeFalsy();
+      const body = JSON.parse(writeBodies()[0]);
+      expect(body).toMatchObject({ key: 'FOO', value: 'bar' });
+    });
+
+    it('artifact tool still registers and routes begin to the deployer', async () => {
+      mockFetch.mockImplementation(async () => jsonResponse({ upload_id: 'u1' }));
+      const result = await client.callTool({
+        name: 'artifact',
+        arguments: { action: 'begin', name: 'demo', owner: 'dudi', mode: 'create' },
+      });
+      expect(result.isError).toBeFalsy();
+      expect(String(mockFetch.mock.calls[0][0])).toContain('deployer.invalid');
     });
   });
 });

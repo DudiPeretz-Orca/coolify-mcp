@@ -538,21 +538,15 @@ export class CoolifyMcpServer extends McpServer {
     // `custom_docker_run_options` (raw `docker run` flags: --privileged, --cap-add, --device)
     // is deliberately NOT part of this shape and must never be added: it would let any
     // connector user run a privileged container on the shared host.
+    // Also deliberately absent (do not re-add): `custom_labels` (raw Traefik labels could hijack
+    // other apps' hostnames), and `github_app_uuid` / `private_key_uuid` plus the create_github /
+    // create_key actions that need them (they would use shared team git credentials).
     const applicationShape = {
-      action: z.enum([
-        'create_public',
-        'create_github',
-        'create_key',
-        'create_dockerimage',
-        'create_dockerfile',
-        'update',
-      ]),
+      action: z.enum(['create_public', 'create_dockerimage', 'create_dockerfile', 'update']),
       uuid: z.string().optional(),
       // Create fields
       project_uuid: z.string().optional(),
       server_uuid: z.string().optional(),
-      github_app_uuid: z.string().optional(),
-      private_key_uuid: z.string().optional(),
       destination_uuid: z.string().optional(),
       git_repository: z.string().optional(),
       git_branch: z.string().optional(),
@@ -570,7 +564,6 @@ export class CoolifyMcpServer extends McpServer {
       description: z.string().optional(),
       fqdn: z.string().optional(),
       domains: z.string().optional(),
-      custom_labels: z.string().optional(),
       instant_deploy: z.boolean().optional(),
       // Health check fields
       health_check_enabled: z.boolean().optional(),
@@ -661,119 +654,6 @@ export class CoolifyMcpServer extends McpServer {
                 health_check_timeout: args.health_check_timeout,
                 health_check_retries: args.health_check_retries,
                 health_check_start_period: args.health_check_start_period,
-                custom_labels: args.custom_labels,
-                instant_deploy: args.instant_deploy,
-              }),
-            );
-          case 'create_github':
-            if (
-              !args.project_uuid ||
-              !args.server_uuid ||
-              !args.github_app_uuid ||
-              !args.git_repository ||
-              !args.git_branch
-            ) {
-              return {
-                content: [
-                  {
-                    type: 'text' as const,
-                    text: 'Error: project_uuid, server_uuid, github_app_uuid, git_repository, git_branch required',
-                  },
-                ],
-              };
-            }
-            return wrap(() =>
-              this.client.createApplicationPrivateGH({
-                project_uuid: args.project_uuid!,
-                server_uuid: args.server_uuid!,
-                github_app_uuid: args.github_app_uuid!,
-                destination_uuid: args.destination_uuid,
-                git_repository: args.git_repository!,
-                git_branch: args.git_branch!,
-                build_pack: args.build_pack as BuildPack | undefined,
-                ports_exposes: args.ports_exposes,
-                environment_name: args.environment_name,
-                environment_uuid: args.environment_uuid,
-                name: args.name,
-                description: args.description,
-                fqdn: args.fqdn,
-                domains: args.domains,
-                base_directory: args.base_directory,
-                publish_directory: args.publish_directory,
-                install_command: args.install_command,
-                build_command: args.build_command,
-                start_command: args.start_command,
-                dockerfile_location: args.dockerfile_location,
-                watch_paths: args.watch_paths,
-                health_check_enabled: args.health_check_enabled,
-                health_check_path: args.health_check_path,
-                health_check_port: args.health_check_port,
-                health_check_host: args.health_check_host,
-                health_check_method: args.health_check_method,
-                health_check_return_code: args.health_check_return_code,
-                health_check_scheme: args.health_check_scheme,
-                health_check_response_text: args.health_check_response_text,
-                health_check_interval: args.health_check_interval,
-                health_check_timeout: args.health_check_timeout,
-                health_check_retries: args.health_check_retries,
-                health_check_start_period: args.health_check_start_period,
-                custom_labels: args.custom_labels,
-                instant_deploy: args.instant_deploy,
-              }),
-            );
-          case 'create_key':
-            if (
-              !args.project_uuid ||
-              !args.server_uuid ||
-              !args.private_key_uuid ||
-              !args.git_repository ||
-              !args.git_branch
-            ) {
-              return {
-                content: [
-                  {
-                    type: 'text' as const,
-                    text: 'Error: project_uuid, server_uuid, private_key_uuid, git_repository, git_branch required',
-                  },
-                ],
-              };
-            }
-            return wrap(() =>
-              this.client.createApplicationPrivateKey({
-                project_uuid: args.project_uuid!,
-                server_uuid: args.server_uuid!,
-                private_key_uuid: args.private_key_uuid!,
-                destination_uuid: args.destination_uuid,
-                git_repository: args.git_repository!,
-                git_branch: args.git_branch!,
-                build_pack: args.build_pack as BuildPack | undefined,
-                ports_exposes: args.ports_exposes,
-                environment_name: args.environment_name,
-                environment_uuid: args.environment_uuid,
-                name: args.name,
-                description: args.description,
-                fqdn: args.fqdn,
-                domains: args.domains,
-                base_directory: args.base_directory,
-                publish_directory: args.publish_directory,
-                install_command: args.install_command,
-                build_command: args.build_command,
-                start_command: args.start_command,
-                dockerfile_location: args.dockerfile_location,
-                watch_paths: args.watch_paths,
-                health_check_enabled: args.health_check_enabled,
-                health_check_path: args.health_check_path,
-                health_check_port: args.health_check_port,
-                health_check_host: args.health_check_host,
-                health_check_method: args.health_check_method,
-                health_check_return_code: args.health_check_return_code,
-                health_check_scheme: args.health_check_scheme,
-                health_check_response_text: args.health_check_response_text,
-                health_check_interval: args.health_check_interval,
-                health_check_timeout: args.health_check_timeout,
-                health_check_retries: args.health_check_retries,
-                health_check_start_period: args.health_check_start_period,
-                custom_labels: args.custom_labels,
                 instant_deploy: args.instant_deploy,
               }),
             );
@@ -822,7 +702,6 @@ export class CoolifyMcpServer extends McpServer {
                 health_check_timeout: args.health_check_timeout,
                 health_check_retries: args.health_check_retries,
                 health_check_start_period: args.health_check_start_period,
-                custom_labels: args.custom_labels,
                 instant_deploy: args.instant_deploy,
               }),
             );
@@ -852,7 +731,6 @@ export class CoolifyMcpServer extends McpServer {
                 description: args.description,
                 fqdn: args.fqdn,
                 domains: args.domains,
-                custom_labels: args.custom_labels,
                 instant_deploy: args.instant_deploy,
               }),
             );
@@ -1043,63 +921,45 @@ export class CoolifyMcpServer extends McpServer {
     // =========================================================================
     this.tool(
       'control',
-      'Start/stop/restart app, database, or service',
+      'Start/stop/restart an application (databases and services are not controllable from this connector)',
       {
-        resource: z.enum(['application', 'database', 'service']),
+        resource: z.enum(['application']),
         action: z.enum(['start', 'stop', 'restart']),
         uuid: z.string(),
-        pull_latest: z
-          .boolean()
-          .optional()
-          .describe('Pull latest images before restarting (services only)'),
       },
-      async ({ resource, action, uuid, pull_latest }) => {
-        const methods: Record<string, Record<string, (u: string) => Promise<unknown>>> = {
-          application: {
-            start: (u) => this.client.startApplication(u),
-            stop: (u) => this.client.stopApplication(u),
-            restart: (u) => this.client.restartApplication(u),
-          },
-          database: {
-            start: (u) => this.client.startDatabase(u),
-            stop: (u) => this.client.stopDatabase(u),
-            restart: (u) => this.client.restartDatabase(u),
-          },
-          service: {
-            start: (u) => this.client.startService(u),
-            stop: (u) => this.client.stopService(u),
-            restart: (u) => this.client.restartService(u, pull_latest),
-          },
+      async ({ resource, action, uuid }) => {
+        // Defence in depth: the schema already restricts this, but a caller that bypasses
+        // validation must still not reach database/service control.
+        if (resource !== 'application') {
+          return {
+            content: [
+              {
+                type: 'text' as const,
+                text: 'Error: control only supports resource=application',
+              },
+            ],
+          };
+        }
+        const methods: Record<string, (u: string) => Promise<unknown>> = {
+          start: (u) => this.client.startApplication(u),
+          stop: (u) => this.client.stopApplication(u),
+          restart: (u) => this.client.restartApplication(u),
         };
 
-        // Generate contextual actions based on resource type and action taken
         const getControlActions = (): ResponseAction[] => {
-          const actions: ResponseAction[] = [];
-          if (resource === 'application') {
-            actions.push({ tool: 'application_logs', args: { uuid }, hint: 'View logs' });
-            actions.push({ tool: 'get_application', args: { uuid }, hint: 'Check status' });
-            if (action === 'start' || action === 'restart') {
-              actions.push({
-                tool: 'control',
-                args: { resource: 'application', action: 'stop', uuid },
-                hint: 'Stop',
-              });
-            } else {
-              actions.push({
-                tool: 'control',
-                args: { resource: 'application', action: 'start', uuid },
-                hint: 'Start',
-              });
-            }
-          } else if (resource === 'database') {
-            actions.push({ tool: 'get_database', args: { uuid }, hint: 'Check status' });
-          } else if (resource === 'service') {
-            actions.push({ tool: 'get_service', args: { uuid }, hint: 'Check status' });
-          }
+          const actions: ResponseAction[] = [
+            { tool: 'application_logs', args: { uuid }, hint: 'View logs' },
+            { tool: 'get_application', args: { uuid }, hint: 'Check status' },
+          ];
+          actions.push({
+            tool: 'control',
+            args: { resource: 'application', action: action === 'stop' ? 'start' : 'stop', uuid },
+            hint: action === 'stop' ? 'Start' : 'Stop',
+          });
           return actions;
         };
 
-        return wrapWithActions(() => methods[resource][action](uuid), getControlActions);
+        return wrapWithActions(() => methods[action](uuid), getControlActions);
       },
     );
 

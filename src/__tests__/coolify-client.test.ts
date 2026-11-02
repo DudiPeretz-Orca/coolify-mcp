@@ -1377,7 +1377,7 @@ describe('CoolifyClient', () => {
       expect(callBody.fqdn).toBeUndefined();
     });
 
-    it('should pass instant_deploy and custom_labels through createApplicationDockerImage', async () => {
+    it('should pass instant_deploy through createApplicationDockerImage', async () => {
       mockFetch.mockResolvedValueOnce(mockResponse({ uuid: 'new-app-uuid' }));
 
       await client.createApplicationDockerImage({
@@ -1386,12 +1386,10 @@ describe('CoolifyClient', () => {
         docker_registry_image_name: 'traefik/whoami',
         ports_exposes: '80',
         instant_deploy: true,
-        custom_labels: 'dHJhZWZpaw==',
       });
 
       const callBody = JSON.parse(mockFetch.mock.calls[0][1]?.body as string);
       expect(callBody.instant_deploy).toBe(true);
-      expect(callBody.custom_labels).toBe('dHJhZWZpaw==');
     });
 
     // Regression for #178 — verify build-config and health_check_* fields reach

@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Security (Orca fork)
 
 - **`application` tool no longer accepts `custom_docker_run_options`.** Coolify turns that field into raw `docker run` flags (`--privileged`, `--cap-add`, `--device`), so any connector user could run a privileged container on the shared host. Removed from the tool schema, every create/update forwarding path, and the client request types. The `update` action now builds its PATCH body from the schema's declared fields (allowlist) instead of spreading all arguments.
+- **`application` no longer accepts `custom_labels`, `github_app_uuid`, `private_key_uuid`; the `create_github` and `create_key` actions are removed.** `custom_labels` on update persists raw Traefik labels (hostname hijack across apps); the two uuids let any connector user clone with shared team git credentials. `control` is restricted to `resource: application` (database and service start/stop/restart removed).
 
 ## [2.13.0] - 2026-07-02
 

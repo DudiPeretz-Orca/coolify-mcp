@@ -28,7 +28,7 @@ This MCP server provides **16 token-optimized tools** for **debugging, managemen
 | **Projects**       | `projects` (list, get, create, update via action param — delete removed in this fork)                                        |
 | **Environments**   | `environments` (list, get, create via action param — delete removed in this fork)                                            |
 | **Applications**   | `list_applications`, `application` (create/update only — delete and delete_preview removed in this fork), `application_logs` |
-| **Control**        | `control` (start/stop/restart for apps, databases, services)                                                                 |
+| **Control**        | `control` (start/stop/restart for applications only in this fork)                                                            |
 | **Env Vars**       | `env_vars` (CRUD + bulk_update for application, service, and database env vars)                                              |
 | **Deployments**    | `list_deployments`, `deploy`, `deployment` (get, cancel, list_for_app)                                                       |
 | **Artifacts**      | `artifact` (begin/append/upload_url/commit/status proxy to the artifact deployer; needs `DEPLOYER_URL`)                      |
@@ -304,11 +304,11 @@ These tools accept human-friendly identifiers instead of just UUIDs:
 
 - `list_applications` - List all applications (returns summary)
 - `application_logs` - Get application logs
-- `application` - Create or update apps with `action: create_public|create_github|create_key|create_dockerimage|create_dockerfile|update` (delete and delete_preview removed in this fork)
+- `application` - Create or update apps with `action: create_public|create_dockerimage|create_dockerfile|update` (delete, delete_preview, create_github, create_key removed in this fork; `custom_labels` and `custom_docker_run_options` are not accepted)
   - Deploy from public repos, private GitHub, SSH keys, Docker images, or a raw Dockerfile
   - Configure health checks (path, interval, retries, etc.)
 - `env_vars` - Manage env vars with `resource: application|service|database, action: list|create|update|delete|bulk_update`
-- `control` - Start/stop/restart with `resource: application|database|service, action: start|stop|restart`
+- `control` - Start/stop/restart with `resource: application, action: start|stop|restart` (databases and services removed in this fork)
 
 ### Deployments
 
