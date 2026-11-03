@@ -45,6 +45,27 @@ const DENIED = [
   'nixpacks.install.cmd',
   'node-options',
   'Docker.Host',
+  'PERL5OPT',
+  'perl5db',
+  'PYTHONWARNINGS',
+  'BROWSER',
+  'SHELLOPTS',
+  'BASHOPTS',
+  'PS4',
+  'PROMPT_COMMAND',
+  'GOFLAGS',
+  'RUSTC_WRAPPER',
+  'RUSTFLAGS',
+  'JAVA_OPTS',
+  'MAVEN_OPTS',
+  'MAVEN_ARGS',
+  'GRADLE_OPTS',
+  'NPM_CONFIG_NODE_OPTIONS',
+  'npm_config_node_options',
+  'npm-config-script-shell',
+  'NPM_CONFIG_SCRIPT_SHELL',
+  'MISE_EXEC',
+  'mise.env',
 ];
 const ALLOWED = [
   'API_URL',
@@ -53,7 +74,11 @@ const ALLOWED = [
   'DATABASE_URL',
   'REPORT_GZ_B64',
   'lower_case_key',
-  'PERL5OPT',
+  'NPM_CONFIG_REGISTRY',
+  'NPM_CONFIG_LOGLEVEL',
+  'MAVEN_HOME',
+  'JAVA_HOME',
+  'RUBYOPT',
   'my.dotted-key',
 ];
 const BAD_SHAPES = ['A=B', ' KEY', 'KEY ', '', 'K\nL', 'K\0L', '1ABC', 'A'.repeat(257)];
@@ -151,6 +176,12 @@ describe('env_vars key denylist', () => {
         ['denied assignment line', 'ok\nNIXPACKS_INSTALL_CMD=curl x', true],
         ['export denied assignment', 'ok\nexport BASH_ENV=/x', true],
         ['dotted denied assignment', 'ok\n  nixpacks.install.cmd = x', true],
+        ['colon assignment', 'ok\nNODE_OPTIONS: --import=x', true],
+        ['export colon assignment', 'ok\nexport NODE_OPTIONS: x', true],
+        ['double-quoted key', 'ok\n"NODE_OPTIONS"=x', true],
+        ['single-quoted key', "ok\n'NIXPACKS_INSTALL_CMD':y", true],
+        ['no-space colon', 'ok\nNODE_OPTIONS:v', true],
+        ['YAML env key', 'a\nenv: production', true],
         ['single-line denied assignment', 'NODE_OPTIONS=--require x', undefined],
       ])('refuses %s without echoing the value', async (_c, v, ml) => {
         const r = await call(build(v as string, ml as boolean | undefined));
@@ -163,6 +194,9 @@ describe('env_vars key denylist', () => {
       });
       it('accepts a PEM-like multi-line value', async () => {
         expect((await call(build(PEM, true))).isError).toBeFalsy();
+      });
+      it('accepts a YAML-style line with an allowed key', async () => {
+        expect((await call(build('a\nname: foo', true))).isError).toBeFalsy();
       });
       it('accepts denied text that is not at line start', async () => {
         expect((await call(build('see NIXPACKS_INSTALL_CMD=x here'))).isError).toBeFalsy();
@@ -243,7 +277,7 @@ describe('env_vars key denylist', () => {
   });
 
   it('exports a frozen-shape denylist and the guard throws typed errors', () => {
-    expect(DENIED_ENV_KEY_PATTERNS).toHaveLength(17);
+    expect(DENIED_ENV_KEY_PATTERNS).toHaveLength(35);
     expect(() => assertEnvKeyAllowed('PORT')).not.toThrow();
     expect(() => assertEnvKeyAllowed('docker_host')).toThrow(/^invalid_argument:/);
   });

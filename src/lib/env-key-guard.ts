@@ -4,9 +4,9 @@
  * interpreter start-up hooks, runtime option variables that can run code with no file on disk).
  *
  * Hard-coded on purpose: no environment override, nothing configurable.
- * NODE_OPTIONS and the Java option variables ARE denied: they can load code from a data: URL or
- * an agent option with nothing on disk. PYTHONPATH, PYTHONHOME, PERL5OPT and RUBYOPT are
- * deliberately NOT denied: they only load code from a file that must already exist on disk.
+ * Criterion: block keys whose value can name a command to run or contain code, or that name a
+ * build wrapper. This is a best-effort denylist, not a complete boundary; PYTHONPATH,
+ * PYTHONHOME and RUBYOPT are deliberately allowed.
  * Delete and list are not guarded, so a dangerous key that is already set can be removed
  * through the connector but never changed.
  */
@@ -28,6 +28,24 @@ export const DENIED_ENV_KEY_PATTERNS: readonly RegExp[] = [
   /^JAVA_TOOL_OPTIONS$/i,
   /^JDK_JAVA_OPTIONS$/i,
   /^_JAVA_OPTIONS$/i,
+  /^PERL5OPT$/i,
+  /^PERL5DB$/i,
+  /^PYTHONWARNINGS$/i,
+  /^BROWSER$/i,
+  /^SHELLOPTS$/i,
+  /^BASHOPTS$/i,
+  /^PS4$/i,
+  /^PROMPT_COMMAND$/i,
+  /^GOFLAGS$/i,
+  /^RUSTC_WRAPPER$/i,
+  /^RUSTFLAGS$/i,
+  /^JAVA_OPTS$/i,
+  /^MAVEN_OPTS$/i,
+  /^MAVEN_ARGS$/i,
+  /^GRADLE_OPTS$/i,
+  /^NPM_CONFIG_NODE_OPTIONS$/i,
+  /^NPM_CONFIG_SCRIPT_SHELL$/i,
+  /^MISE_/i,
 ];
 
 /** Coolify documents no key rule; this accepts ordinary names incl. lower-case and dotted ones. */
@@ -61,7 +79,7 @@ export function assertEnvKeyAllowed(key: unknown): void {
   }
 }
 
-const ASSIGNMENT_LINE_RE = /^\s*(export\s+)?([A-Za-z_][A-Za-z0-9_.-]*)\s*=/;
+const ASSIGNMENT_LINE_RE = /^\s*(?:export\s+)?["']?([A-Za-z_][A-Za-z0-9_.-]*)["']?\s*[=:]/;
 
 /**
  * Values are written into env files line by line, so control characters and embedded
@@ -81,7 +99,7 @@ export function assertEnvValueAllowed(value: unknown, isMultiline: unknown, fiel
   }
   for (const line of value.split('\n')) {
     const m = ASSIGNMENT_LINE_RE.exec(line);
-    if (m && isDeniedKey(m[2])) {
+    if (m && isDeniedKey(m[1])) {
       throw new EnvKeyError(
         `invalid_argument: ${field} contains a line that assigns a variable that must be set in the Coolify dashboard`,
       );
