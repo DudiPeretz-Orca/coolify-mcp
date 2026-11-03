@@ -17,7 +17,16 @@ import {
 } from './coolify-client.js';
 import { DeployerClient } from './deployer-client.js';
 import { InvalidArgumentError, SAFE_SEGMENT_RE, safeSegment } from './path-safety.js';
-import { APP_UUID_RE, ScopeError, assertAppInScope, assertDeploymentInScope } from './scope.js';
+import {
+  APP_UUID_RE,
+  REMOVED_CREATE_ACTIONS,
+  REMOVED_UPDATE_FIELDS,
+  ScopeError,
+  assertAppInScope,
+  assertDeploymentInScope,
+  resolveCreateScope,
+  survivingCreateActions,
+} from './scope.js';
 import type {
   CoolifyConfig,
   BuildPack,
@@ -314,9 +323,12 @@ interface DeployWaitResult {
 export class CoolifyMcpServer extends McpServer {
   private readonly client: CoolifyClient;
   private readonly deployer?: DeployerClient;
+  private readonly removedCreateActions: readonly string[];
 
-  constructor(config: CoolifyConfig) {
+  /** `options.removedCreateActions` exists so tests can prove the enum/handler derive from the list. */
+  constructor(config: CoolifyConfig, options?: { removedCreateActions?: readonly string[] }) {
     super({ name: 'coolify', version: VERSION });
+    this.removedCreateActions = options?.removedCreateActions ?? REMOVED_CREATE_ACTIONS;
     this.client = new CoolifyClient(config);
     this.deployer = config.deployerUrl ? new DeployerClient(config.deployerUrl) : undefined;
     this.registerTools();
@@ -594,12 +606,15 @@ export class CoolifyMcpServer extends McpServer {
     // other apps' hostnames), and `github_app_uuid` / `private_key_uuid` plus the create_github /
     // create_key actions that need them (they would use shared team git credentials).
     const applicationShape = {
-      action: z.enum(['create_public', 'create_dockerimage', 'create_dockerfile', 'update']),
+      action: z.enum([
+        ...survivingCreateActions(this.removedCreateActions),
+        'update',
+      ] as unknown as [string, ...string[]]),
       uuid: safeId().optional(),
-      // Create fields
+      // Create fields. The four placement fields are optional and, when given, must equal the
+      // scope constants (see resolveCreateScope); `destination_uuid` is intentionally absent.
       project_uuid: z.string().optional(),
       server_uuid: z.string().optional(),
-      destination_uuid: z.string().optional(),
       git_repository: z.string().optional(),
       git_branch: z.string().optional(),
       environment_name: z.string().optional(),
@@ -643,8 +658,18 @@ export class CoolifyMcpServer extends McpServer {
       // (controller $allowedFields line 1014) but accepts on PATCH (line 2497).
       dockerfile_target_build: z.string().optional(),
     };
+    // Update never sends build-source fields (REMOVED_UPDATE_FIELDS) nor create-time placement.
+    const NEVER_UPDATABLE = [
+      'action',
+      'uuid',
+      'project_uuid',
+      'server_uuid',
+      'environment_uuid',
+      'environment_name',
+      ...REMOVED_UPDATE_FIELDS,
+    ];
     const UPDATABLE_APPLICATION_FIELDS = Object.keys(applicationShape).filter(
-      (k) => k !== 'action' && k !== 'uuid',
+      (k) => !NEVER_UPDATABLE.includes(k),
     );
 
     this.tool(
@@ -653,11 +678,25 @@ export class CoolifyMcpServer extends McpServer {
       applicationShape,
       async (args) => {
         const { action, uuid } = args;
+        let placement: ReturnType<typeof resolveCreateScope> | undefined;
+        if (action !== 'update') {
+          if (!survivingCreateActions(this.removedCreateActions).includes(action)) {
+            return {
+              content: [{ type: 'text' as const, text: `Error: unsupported action ${action}` }],
+              isError: true,
+            };
+          }
+          try {
+            placement = resolveCreateScope(args);
+          } catch (error) {
+            const denied = argumentErrorResult(error);
+            if (denied) return denied;
+            throw error;
+          }
+        }
         switch (action) {
           case 'create_public':
             if (
-              !args.project_uuid ||
-              !args.server_uuid ||
               !args.git_repository ||
               !args.git_branch ||
               !args.build_pack ||
@@ -667,22 +706,21 @@ export class CoolifyMcpServer extends McpServer {
                 content: [
                   {
                     type: 'text' as const,
-                    text: 'Error: project_uuid, server_uuid, git_repository, git_branch, build_pack, ports_exposes required',
+                    text: 'Error: git_repository, git_branch, build_pack, ports_exposes required',
                   },
                 ],
               };
             }
             return wrap(() =>
               this.client.createApplicationPublic({
-                project_uuid: args.project_uuid!,
-                server_uuid: args.server_uuid!,
-                destination_uuid: args.destination_uuid,
+                project_uuid: placement!.project_uuid,
+                server_uuid: placement!.server_uuid,
                 git_repository: args.git_repository!,
                 git_branch: args.git_branch!,
                 build_pack: args.build_pack! as BuildPack,
                 ports_exposes: args.ports_exposes!,
-                environment_name: args.environment_name,
-                environment_uuid: args.environment_uuid,
+                environment_name: placement!.environment_name,
+                environment_uuid: placement!.environment_uuid,
                 name: args.name,
                 description: args.description,
                 fqdn: args.fqdn,
@@ -710,31 +748,25 @@ export class CoolifyMcpServer extends McpServer {
               }),
             );
           case 'create_dockerimage':
-            if (
-              !args.project_uuid ||
-              !args.server_uuid ||
-              !args.docker_registry_image_name ||
-              !args.ports_exposes
-            ) {
+            if (!args.docker_registry_image_name || !args.ports_exposes) {
               return {
                 content: [
                   {
                     type: 'text' as const,
-                    text: 'Error: project_uuid, server_uuid, docker_registry_image_name, ports_exposes required',
+                    text: 'Error: docker_registry_image_name, ports_exposes required',
                   },
                 ],
               };
             }
             return wrap(() =>
               this.client.createApplicationDockerImage({
-                project_uuid: args.project_uuid!,
-                server_uuid: args.server_uuid!,
-                destination_uuid: args.destination_uuid,
+                project_uuid: placement!.project_uuid,
+                server_uuid: placement!.server_uuid,
                 docker_registry_image_name: args.docker_registry_image_name!,
                 ports_exposes: args.ports_exposes!,
                 docker_registry_image_tag: args.docker_registry_image_tag,
-                environment_name: args.environment_name,
-                environment_uuid: args.environment_uuid,
+                environment_name: placement!.environment_name,
+                environment_uuid: placement!.environment_uuid,
                 name: args.name,
                 description: args.description,
                 fqdn: args.fqdn,
@@ -758,27 +790,26 @@ export class CoolifyMcpServer extends McpServer {
               }),
             );
           case 'create_dockerfile':
-            if (!args.project_uuid || !args.server_uuid || !args.dockerfile) {
+            if (!args.dockerfile) {
               return {
                 content: [
                   {
                     type: 'text' as const,
-                    text: 'Error: project_uuid, server_uuid, dockerfile required',
+                    text: 'Error: dockerfile required',
                   },
                 ],
               };
             }
             return wrap(() =>
               this.client.createApplicationDockerfile({
-                project_uuid: args.project_uuid!,
-                server_uuid: args.server_uuid!,
-                destination_uuid: args.destination_uuid,
+                project_uuid: placement!.project_uuid,
+                server_uuid: placement!.server_uuid,
                 dockerfile: args.dockerfile!,
                 dockerfile_location: args.dockerfile_location,
                 ports_exposes: args.ports_exposes,
                 base_directory: args.base_directory,
-                environment_name: args.environment_name,
-                environment_uuid: args.environment_uuid,
+                environment_name: placement!.environment_name,
+                environment_uuid: placement!.environment_uuid,
                 name: args.name,
                 description: args.description,
                 fqdn: args.fqdn,
@@ -800,6 +831,11 @@ export class CoolifyMcpServer extends McpServer {
             if (denied) return denied;
             return wrap(() => this.client.updateApplication(uuid, updateData));
           }
+          default:
+            return {
+              content: [{ type: 'text' as const, text: `Error: unsupported action ${action}` }],
+              isError: true,
+            };
         }
       },
     );

@@ -60,3 +60,80 @@ export async function assertDeploymentInScope(
   if (typeof appUuid !== 'string' || appUuid === '') throw new ScopeError(deploymentUuid);
   await assertAppInScope(client, appUuid);
 }
+
+/**
+ * Where connector-created apps land. Hard-coded like SCOPE_ENVIRONMENT_ID: no env var or caller
+ * input can move an app elsewhere (Artifacts / production = environment id 14, on the main host).
+ */
+export const SCOPE_PROJECT_UUID = 'ham77e2te16ndrq6h4m2yudn';
+export const SCOPE_ENVIRONMENT_UUID = 'kglbx2narejwiizub3k0hbbd';
+export const SCOPE_ENVIRONMENT_NAME = 'production';
+export const SCOPE_SERVER_UUID = 'sptooo8egv3zz5cdhumih0g1';
+
+/**
+ * Build-source fields the connector's `update` may never send: changing any of them re-points
+ * an existing in-scope app at attacker-chosen code. They stay settable at create time only.
+ */
+export const REMOVED_UPDATE_FIELDS: readonly string[] = [
+  'dockerfile',
+  'git_repository',
+  'git_branch',
+  'build_pack',
+  'install_command',
+  'build_command',
+  'start_command',
+  'base_directory',
+  'dockerfile_location',
+  'docker_registry_image_name',
+  'docker_registry_image_tag',
+];
+
+/**
+ * Create actions removed from the connector entirely (enum, handler and tools/list derive from
+ * this). Empty until the owner fills it from the audit-log inventory.
+ */
+export const REMOVED_CREATE_ACTIONS: readonly string[] = [];
+
+export const ALL_CREATE_ACTIONS = ['create_public', 'create_dockerimage', 'create_dockerfile'];
+
+export function survivingCreateActions(removed: readonly string[]): string[] {
+  return ALL_CREATE_ACTIONS.filter((a) => !removed.includes(a));
+}
+
+/**
+ * Validates caller-supplied placement fields and returns the constants to send. Id-shape
+ * validation runs first (traversal -> invalid_argument), then an exact, case-sensitive compare
+ * (anything else -> out_of_scope). Omitted fields are filled; nothing caller-supplied is used.
+ */
+export function resolveCreateScope(args: {
+  project_uuid?: unknown;
+  environment_uuid?: unknown;
+  environment_name?: unknown;
+  server_uuid?: unknown;
+}): {
+  project_uuid: string;
+  environment_uuid: string;
+  environment_name: string;
+  server_uuid: string;
+} {
+  const fields = [
+    ['project_uuid', SCOPE_PROJECT_UUID],
+    ['environment_uuid', SCOPE_ENVIRONMENT_UUID],
+    ['environment_name', SCOPE_ENVIRONMENT_NAME],
+    ['server_uuid', SCOPE_SERVER_UUID],
+  ] as const;
+  for (const [name] of fields) {
+    if (args[name] !== undefined) safeSegment(args[name], name);
+  }
+  for (const [name, constant] of fields) {
+    if (args[name] !== undefined && args[name] !== constant) {
+      throw new ScopeError(`${name}=${String(args[name])}`);
+    }
+  }
+  return {
+    project_uuid: SCOPE_PROJECT_UUID,
+    environment_uuid: SCOPE_ENVIRONMENT_UUID,
+    environment_name: SCOPE_ENVIRONMENT_NAME,
+    server_uuid: SCOPE_SERVER_UUID,
+  };
+}

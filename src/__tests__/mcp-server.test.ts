@@ -385,8 +385,8 @@ describe('CoolifyMcpServer v2', () => {
 
     const baseCreatePublic = {
       action: 'create_public' as const,
-      project_uuid: 'proj-uuid',
-      server_uuid: 'server-uuid',
+      project_uuid: 'ham77e2te16ndrq6h4m2yudn',
+      server_uuid: 'sptooo8egv3zz5cdhumih0g1',
       git_repository: 'https://github.com/org/monorepo',
       git_branch: 'main',
       build_pack: 'dockerfile',
@@ -439,8 +439,8 @@ describe('CoolifyMcpServer v2', () => {
       // endpoint doesn't accept build-config (pre-built image), so handler must drop those.
       await callApplication(server, {
         action: 'create_dockerimage',
-        project_uuid: 'proj-uuid',
-        server_uuid: 'server-uuid',
+        project_uuid: 'ham77e2te16ndrq6h4m2yudn',
+        server_uuid: 'sptooo8egv3zz5cdhumih0g1',
         docker_registry_image_name: 'traefik/whoami',
         ports_exposes: '80',
         // Should be forwarded:
@@ -473,8 +473,8 @@ describe('CoolifyMcpServer v2', () => {
 
       await callApplication(server, {
         action: 'create_dockerfile',
-        project_uuid: 'proj-uuid',
-        server_uuid: 'server-uuid',
+        project_uuid: 'ham77e2te16ndrq6h4m2yudn',
+        server_uuid: 'sptooo8egv3zz5cdhumih0g1',
         dockerfile: 'FROM node:20\nCMD ["node", "index.js"]',
         dockerfile_location: '/Dockerfile',
         ports_exposes: '3000',
@@ -483,8 +483,8 @@ describe('CoolifyMcpServer v2', () => {
 
       expect(spy).toHaveBeenCalledWith(
         expect.objectContaining({
-          project_uuid: 'proj-uuid',
-          server_uuid: 'server-uuid',
+          project_uuid: 'ham77e2te16ndrq6h4m2yudn',
+          server_uuid: 'sptooo8egv3zz5cdhumih0g1',
           dockerfile: 'FROM node:20\nCMD ["node", "index.js"]',
           dockerfile_location: '/Dockerfile',
           ports_exposes: '3000',
@@ -496,13 +496,13 @@ describe('CoolifyMcpServer v2', () => {
     it('returns required-param error when create_dockerfile is missing dockerfile', async () => {
       const result = (await callApplication(server, {
         action: 'create_dockerfile',
-        project_uuid: 'proj-uuid',
-        server_uuid: 'server-uuid',
+        project_uuid: 'ham77e2te16ndrq6h4m2yudn',
+        server_uuid: 'sptooo8egv3zz5cdhumih0g1',
       })) as { content: Array<{ text: string }> };
-      expect(result.content[0].text).toContain('project_uuid, server_uuid, dockerfile required');
+      expect(result.content[0].text).toContain('dockerfile required');
     });
 
-    it('forwards dockerfile_target_build through update (PATCH-only)', async () => {
+    it('forwards dockerfile_target_build through update (PATCH-only), minus build-source fields', async () => {
       const spy = jest.spyOn(server['client'], 'updateApplication').mockResolvedValue({} as never);
 
       await callApplication(server, {
@@ -515,14 +515,12 @@ describe('CoolifyMcpServer v2', () => {
 
       expect(spy).toHaveBeenCalledWith(
         APP_UUID,
-        expect.objectContaining({
-          dockerfile_location: '/apps/api/Dockerfile',
-          dockerfile_target_build: 'production',
-          base_directory: '/apps/api',
-        }),
+        expect.objectContaining({ dockerfile_target_build: 'production' }),
       );
-      // Confirm the update spread strips routing fields.
+      // Confirm the update spread strips routing fields and removed build-source fields.
       const updateData = spy.mock.calls[0]?.[1] as unknown as Record<string, unknown>;
+      expect(updateData).not.toHaveProperty('dockerfile_location');
+      expect(updateData).not.toHaveProperty('base_directory');
       expect(updateData).not.toHaveProperty('action');
       expect(updateData).not.toHaveProperty('uuid');
     });

@@ -103,8 +103,6 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
       'create_public',
       {
         action: 'create_public',
-        project_uuid: 'p',
-        server_uuid: 's',
         git_repository: 'https://github.com/o/r',
         git_branch: 'main',
         build_pack: 'nixpacks',
@@ -115,8 +113,6 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
       'create_dockerimage',
       {
         action: 'create_dockerimage',
-        project_uuid: 'p',
-        server_uuid: 's',
         docker_registry_image_name: 'traefik/whoami',
         ports_exposes: '80',
       },
@@ -125,8 +121,6 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
       'create_dockerfile',
       {
         action: 'create_dockerfile',
-        project_uuid: 'p',
-        server_uuid: 's',
         dockerfile: 'FROM scratch',
       },
     ],
@@ -361,8 +355,6 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     it('create_public with domains, health checks and build config', async () => {
       await callApplication({
         action: 'create_public',
-        project_uuid: 'p',
-        server_uuid: 's',
         git_repository: 'https://github.com/o/r',
         git_branch: 'main',
         build_pack: 'nixpacks',
@@ -384,8 +376,6 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     it('create_dockerfile with domains', async () => {
       await callApplication({
         action: 'create_dockerfile',
-        project_uuid: 'p',
-        server_uuid: 's',
         dockerfile: 'FROM nginx',
         ports_exposes: '80',
         domains: 'https://site.tools.orca-internal.net',
