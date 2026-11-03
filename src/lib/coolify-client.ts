@@ -3,6 +3,7 @@
  * Complete HTTP client for the Coolify API v1
  */
 
+import { FORCED_ENV_FLAGS } from './env-key-guard.js';
 import { safeSegment } from './path-safety.js';
 import type {
   CoolifyConfig,
@@ -198,6 +199,15 @@ export interface GitHubAppSummary {
  * Remove undefined values from an object.
  * Keeps explicit false values so features like HTTP Basic Auth can be disabled.
  */
+/** Single chokepoint: every env create/update body is literal and runtime-only. */
+function withForcedEnvFlags<T extends object>(data: T): T & typeof FORCED_ENV_FLAGS {
+  return { ...data, ...FORCED_ENV_FLAGS };
+}
+
+function withForcedEnvBulk(data: BulkUpdateEnvVarsRequest): BulkUpdateEnvVarsRequest {
+  return { ...data, data: data.data.map((entry) => withForcedEnvFlags(entry)) };
+}
+
 function cleanRequestData<T extends object>(data: T): Partial<T> {
   const cleaned: Partial<T> = {};
   for (const [key, value] of Object.entries(data)) {
@@ -961,14 +971,14 @@ export class CoolifyClient {
   async createApplicationEnvVar(uuid: string, data: CreateEnvVarRequest): Promise<UuidResponse> {
     return this.request<UuidResponse>(`/applications/${safeSegment(uuid, 'uuid')}/envs`, {
       method: 'POST',
-      body: JSON.stringify(cleanRequestData(data)),
+      body: JSON.stringify(cleanRequestData(withForcedEnvFlags(data))),
     });
   }
 
   async updateApplicationEnvVar(uuid: string, data: UpdateEnvVarRequest): Promise<MessageResponse> {
     return this.request<MessageResponse>(`/applications/${safeSegment(uuid, 'uuid')}/envs`, {
       method: 'PATCH',
-      body: JSON.stringify(cleanRequestData(data)),
+      body: JSON.stringify(cleanRequestData(withForcedEnvFlags(data))),
     });
   }
 
@@ -978,7 +988,7 @@ export class CoolifyClient {
   ): Promise<MessageResponse> {
     return this.request<MessageResponse>(`/applications/${safeSegment(uuid, 'uuid')}/envs/bulk`, {
       method: 'PATCH',
-      body: JSON.stringify(data),
+      body: JSON.stringify(withForcedEnvBulk(data)),
     });
   }
 
@@ -1196,14 +1206,14 @@ export class CoolifyClient {
   async createServiceEnvVar(uuid: string, data: CreateEnvVarRequest): Promise<UuidResponse> {
     return this.request<UuidResponse>(`/services/${safeSegment(uuid, 'uuid')}/envs`, {
       method: 'POST',
-      body: JSON.stringify(cleanRequestData(data)),
+      body: JSON.stringify(cleanRequestData(withForcedEnvFlags(data))),
     });
   }
 
   async updateServiceEnvVar(uuid: string, data: UpdateEnvVarRequest): Promise<MessageResponse> {
     return this.request<MessageResponse>(`/services/${safeSegment(uuid, 'uuid')}/envs`, {
       method: 'PATCH',
-      body: JSON.stringify(cleanRequestData(data)),
+      body: JSON.stringify(cleanRequestData(withForcedEnvFlags(data))),
     });
   }
 
@@ -1602,14 +1612,14 @@ export class CoolifyClient {
   async createDatabaseEnvVar(uuid: string, data: CreateEnvVarRequest): Promise<UuidResponse> {
     return this.request<UuidResponse>(`/databases/${safeSegment(uuid, 'uuid')}/envs`, {
       method: 'POST',
-      body: JSON.stringify(cleanRequestData(data)),
+      body: JSON.stringify(cleanRequestData(withForcedEnvFlags(data))),
     });
   }
 
   async updateDatabaseEnvVar(uuid: string, data: UpdateEnvVarRequest): Promise<MessageResponse> {
     return this.request<MessageResponse>(`/databases/${safeSegment(uuid, 'uuid')}/envs`, {
       method: 'PATCH',
-      body: JSON.stringify(cleanRequestData(data)),
+      body: JSON.stringify(cleanRequestData(withForcedEnvFlags(data))),
     });
   }
 
@@ -1619,7 +1629,7 @@ export class CoolifyClient {
   ): Promise<MessageResponse> {
     return this.request<MessageResponse>(`/databases/${safeSegment(uuid, 'uuid')}/envs/bulk`, {
       method: 'PATCH',
-      body: JSON.stringify(data),
+      body: JSON.stringify(withForcedEnvBulk(data)),
     });
   }
 
@@ -1688,7 +1698,7 @@ export class CoolifyClient {
   ): Promise<MessageResponse> {
     return this.request<MessageResponse>(`/services/${safeSegment(uuid, 'uuid')}/envs/bulk`, {
       method: 'PATCH',
-      body: JSON.stringify(data),
+      body: JSON.stringify(withForcedEnvBulk(data)),
     });
   }
 
@@ -2402,15 +2412,12 @@ export class CoolifyClient {
    * @param appUuids - Array of application UUIDs
    * @param key - Environment variable key
    * @param value - Environment variable value
-   * @param isBuildtime - Sets the build-time flag on the variable when provided
-   * @param isRuntime - Sets the runtime flag on the variable when provided
+   * Flags are always forced to literal, runtime-only by the env write methods.
    */
   async bulkEnvUpdate(
     appUuids: string[],
     key: string,
     value: string,
-    isBuildtime?: boolean,
-    isRuntime?: boolean,
   ): Promise<BatchOperationResult> {
     // Early return for empty array - avoid unnecessary API call
     if (appUuids.length === 0) {
@@ -2436,8 +2443,6 @@ export class CoolifyClient {
         this.updateApplicationEnvVar(uuid, {
           key,
           value,
-          is_buildtime: isBuildtime,
-          is_runtime: isRuntime,
         }),
       ),
     );

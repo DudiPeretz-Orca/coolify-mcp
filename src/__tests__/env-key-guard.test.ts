@@ -66,6 +66,8 @@ const DENIED = [
   'NPM_CONFIG_SCRIPT_SHELL',
   'MISE_EXEC',
   'mise.env',
+  'NIXPACKSXINSTALL_CMD',
+  'RAILPACKXBUILD',
 ];
 const ALLOWED = [
   'API_URL',
@@ -79,6 +81,7 @@ const ALLOWED = [
   'MAVEN_HOME',
   'JAVA_HOME',
   'RUBYOPT',
+  'NIX_PATH',
   'my.dotted-key',
 ];
 const BAD_SHAPES = ['A=B', ' KEY', 'KEY ', '', 'K\nL', 'K\0L', '1ABC', 'A'.repeat(257)];
@@ -284,6 +287,16 @@ describe('env_vars key denylist', () => {
       });
     });
 
+    it.each([
+      ['is_literal false', { is_literal: false }],
+      ['is_buildtime true', { is_buildtime: true }],
+      ['is_runtime false', { is_runtime: false }],
+    ])('bulk_update refuses top-level %s with zero requests', async (_c, flags) => {
+      const r = await call({ action: 'bulk_update', data: [{ key: 'A', value: '1' }], ...flags });
+      refused(r);
+      expect(r.content[0].text).toContain(Object.keys(flags)[0]);
+    });
+
     it('bulk_update with one bad entry is refused as a whole; good entries all forced', async () => {
       refused(
         await call({
@@ -360,6 +373,47 @@ describe('env_vars key denylist', () => {
     expect(DENIED_ENV_KEY_PATTERNS).toHaveLength(35);
     expect(() => assertEnvKeyAllowed('PORT')).not.toThrow();
     expect(() => assertEnvKeyAllowed('docker_host')).toThrow(/^invalid_argument:/);
+  });
+
+  describe('create_public build_pack', () => {
+    const tool = (): ((a: Record<string, unknown>, e: unknown) => Promise<ToolRes>) =>
+      (
+        server as unknown as {
+          _registeredTools: Record<
+            string,
+            { handler: (a: Record<string, unknown>, e: unknown) => Promise<ToolRes> }
+          >;
+        }
+      )._registeredTools['application'].handler;
+    const args = (build_pack: unknown): Record<string, unknown> => ({
+      action: 'create_public',
+      git_repository: 'https://github.com/o/r',
+      git_branch: 'main',
+      ports_exposes: '3000',
+      build_pack,
+    });
+
+    it.each(['dockercompose', 'dockerimage', 'railpack', '', 'NIXPACKS', 'Static', 5, null])(
+      'refuses %j with zero requests (handler guard)',
+      async (bp) => {
+        const r = await tool()(args(bp), {});
+        refused(r);
+        expect(r.content[0].text).toContain('build_pack');
+      },
+    );
+
+    it.each(['dockercompose', 'dockerimage', 'railpack', 'NIXPACKS'])(
+      'protocol refuses %s with invalid_argument and zero requests',
+      async (bp) => {
+        refused((await client.callTool({ name: 'application', arguments: args(bp) })) as ToolRes);
+      },
+    );
+
+    it.each(['nixpacks', 'static', 'dockerfile'])('accepts %s', async (bp) => {
+      const r = (await client.callTool({ name: 'application', arguments: args(bp) })) as ToolRes;
+      expect(r.isError).toBeFalsy();
+      expect(writes().length).toBe(1);
+    });
   });
 
   it('tools/list stays at 16 tools', async () => {

@@ -19,6 +19,7 @@ import { DeployerClient } from './deployer-client.js';
 import {
   EnvKeyError,
   FORCED_ENV_FLAGS,
+  assertBuildPackAllowed,
   assertEnvFlagsAllowed,
   assertEnvKeyAllowed,
   assertEnvValueAllowed,
@@ -631,7 +632,10 @@ export class CoolifyMcpServer extends McpServer {
       git_branch: z.string().optional(),
       environment_name: z.string().optional(),
       environment_uuid: z.string().optional(),
-      build_pack: z.string().optional(),
+      build_pack: z
+        .string()
+        .optional()
+        .describe('create_public only: one of nixpacks, static, dockerfile.'),
       ports_exposes: z.string().optional(),
       // Docker image fields
       docker_registry_image_name: z.string().optional(),
@@ -706,6 +710,15 @@ export class CoolifyMcpServer extends McpServer {
             const denied = argumentErrorResult(error);
             if (denied) return denied;
             throw error;
+          }
+          if (action === 'create_public' && args.build_pack !== undefined) {
+            try {
+              assertBuildPackAllowed(args.build_pack);
+            } catch (error) {
+              const denied = argumentErrorResult(error);
+              if (denied) return denied;
+              throw error;
+            }
           }
           // One application-list fetch per create call, only when a domain was supplied.
           // Coolify returns the whole list when no page params are sent, so no paging loop.
@@ -1195,6 +1208,8 @@ export class CoolifyMcpServer extends McpServer {
           if (action === 'create' || action === 'update') {
             if (key !== undefined) assertEnvKeyAllowed(key);
             if (value !== undefined) assertEnvValueAllowed(value, is_multiline, 'value');
+          }
+          if (action === 'create' || action === 'update' || action === 'bulk_update') {
             assertEnvFlagsAllowed({ is_literal, is_buildtime, is_runtime });
           }
           if (action === 'bulk_update' && data !== undefined) {

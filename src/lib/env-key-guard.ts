@@ -11,8 +11,8 @@
  * through the connector but never changed.
  */
 export const DENIED_ENV_KEY_PATTERNS: readonly RegExp[] = [
-  /^NIXPACKS_/i,
-  /^RAILPACK_/i,
+  /^NIXPACKS./i,
+  /^RAILPACK./i,
   /^BUILDKIT_/i,
   /^BUILDX_/i,
   /^DOCKER_/i,
@@ -123,5 +123,16 @@ export function assertEnvFlagsAllowed(flags: Record<string, unknown>, prefix = '
         `invalid_argument: ${prefix}${name} must be ${forced} or omitted; the connector only writes literal, runtime-only variables (use the Coolify dashboard for build-time or interpolated variables)`,
       );
     }
+  }
+}
+
+/** Build packs create_public may use; anything else is created in the Coolify dashboard. */
+export const ALLOWED_CREATE_BUILD_PACKS = ['nixpacks', 'static', 'dockerfile'] as const;
+
+export function assertBuildPackAllowed(value: unknown): void {
+  if (!(ALLOWED_CREATE_BUILD_PACKS as readonly unknown[]).includes(value)) {
+    throw new EnvKeyError(
+      `invalid_argument: build_pack must be one of ${ALLOWED_CREATE_BUILD_PACKS.join(', ')}; only those build packs can be created through the connector (use the Coolify dashboard for others)`,
+    );
   }
 }
