@@ -16,6 +16,7 @@ import {
   type ServiceSummary,
 } from './coolify-client.js';
 import { DeployerClient } from './deployer-client.js';
+import { EnvKeyError, assertEnvKeyAllowed } from './env-key-guard.js';
 import { InvalidArgumentError, SAFE_SEGMENT_RE, safeSegment } from './path-safety.js';
 import {
   APP_UUID_RE,
@@ -49,7 +50,11 @@ const safeId = (): z.ZodString =>
 
 /** Rejected path segments and scope failures are tool errors (isError), never silent successes. */
 function argumentErrorResult(error: unknown): ToolResult | undefined {
-  if (error instanceof InvalidArgumentError || error instanceof ScopeError) {
+  if (
+    error instanceof InvalidArgumentError ||
+    error instanceof EnvKeyError ||
+    error instanceof ScopeError
+  ) {
     return { content: [{ type: 'text' as const, text: error.message }], isError: true };
   }
   return undefined;
@@ -1127,7 +1132,12 @@ export class CoolifyMcpServer extends McpServer {
         resource: z.enum(['application']),
         action: z.enum(['list', 'create', 'update', 'delete', 'bulk_update']),
         uuid: safeId(),
-        key: z.string().optional(),
+        key: z
+          .string()
+          .optional()
+          .describe(
+            'Env var name. Names that control build, start or loader behavior are refused (invalid_argument); set those in the Coolify dashboard.',
+          ),
         value: z.string().optional(),
         env_uuid: safeId().optional(),
         is_buildtime: z.boolean().optional(),
@@ -1157,9 +1167,17 @@ export class CoolifyMcpServer extends McpServer {
             ],
           };
         }
-        // Validate every path-bound id before the scope lookup so a bad one costs zero requests.
+        // Validate every path-bound id, then the env keys, before the scope lookup so a bad
+        // one costs zero requests. delete and list are never key-checked.
         const denied = await denyUnlessInScope(async () => {
           if (env_uuid !== undefined) safeSegment(env_uuid, 'env_uuid');
+          // An absent key keeps the handler's own "key, value required" error.
+          if ((action === 'create' || action === 'update') && key !== undefined)
+            assertEnvKeyAllowed(key);
+          if (action === 'bulk_update' && data !== undefined) {
+            if (!Array.isArray(data)) assertEnvKeyAllowed(undefined);
+            else for (const entry of data) assertEnvKeyAllowed(entry?.key);
+          }
           await assertAppInScope(this.client, uuid);
         });
         if (denied) return denied;
