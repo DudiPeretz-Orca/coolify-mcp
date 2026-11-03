@@ -16,6 +16,7 @@ import {
   type ServiceSummary,
 } from './coolify-client.js';
 import { DeployerClient } from './deployer-client.js';
+import { InvalidArgumentError, SAFE_SEGMENT_RE, safeSegment } from './path-safety.js';
 import { APP_UUID_RE, ScopeError, assertAppInScope, assertDeploymentInScope } from './scope.js';
 import type {
   CoolifyConfig,
@@ -32,6 +33,18 @@ export const VERSION: string = _require('../../package.json').version;
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
+/** Id-like tool input: restricted to path-safe characters so it fails before the handler runs. */
+const safeId = (): z.ZodString =>
+  z.string().regex(SAFE_SEGMENT_RE, 'invalid_argument: must match ' + SAFE_SEGMENT_RE.source);
+
+/** Rejected path segments and scope failures are tool errors (isError), never silent successes. */
+function argumentErrorResult(error: unknown): ToolResult | undefined {
+  if (error instanceof InvalidArgumentError || error instanceof ScopeError) {
+    return { content: [{ type: 'text' as const, text: error.message }], isError: true };
+  }
+  return undefined;
+}
+
 /**
  * Run a scope check before a handler. Returns an `isError` result (text starts with
  * `out_of_scope`) when the check fails, or undefined when the handler may proceed.
@@ -42,11 +55,17 @@ async function denyUnlessInScope(check: () => Promise<void>): Promise<ToolResult
     await check();
     return undefined;
   } catch (error) {
-    const text =
-      error instanceof ScopeError
-        ? error.message
-        : `out_of_scope: scope check failed (${error instanceof Error ? error.message : String(error)})`;
-    return { content: [{ type: 'text' as const, text }], isError: true };
+    return (
+      argumentErrorResult(error) ?? {
+        content: [
+          {
+            type: 'text' as const,
+            text: `out_of_scope: scope check failed (${error instanceof Error ? error.message : String(error)})`,
+          },
+        ],
+        isError: true,
+      }
+    );
   }
 }
 
@@ -58,14 +77,17 @@ function wrap<T>(
     .then((result) => ({
       content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
     }))
-    .catch((error) => ({
-      content: [
-        {
-          type: 'text' as const,
-          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+    .catch(
+      (error) =>
+        argumentErrorResult(error) ?? {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
         },
-      ],
-    }));
+    );
 }
 
 const TRUNCATION_PREFIX = '...[truncated]...\n';
@@ -224,14 +246,17 @@ function wrapWithActions<T>(
       if (pagination) response._pagination = pagination;
       return { content: [{ type: 'text' as const, text: JSON.stringify(response, null, 2) }] };
     })
-    .catch((error) => ({
-      content: [
-        {
-          type: 'text' as const,
-          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+    .catch(
+      (error) =>
+        argumentErrorResult(error) ?? {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
         },
-      ],
-    }));
+    );
 }
 
 // =============================================================================
@@ -492,7 +517,7 @@ export class CoolifyMcpServer extends McpServer {
       'Manage projects: list/get/create (update and delete unavailable — use the Coolify dashboard)',
       {
         action: z.enum(['list', 'get', 'create']),
-        uuid: z.string().optional(),
+        uuid: safeId().optional(),
         name: z.string().optional(),
         description: z.string().optional(),
         page: z.number().optional(),
@@ -522,7 +547,7 @@ export class CoolifyMcpServer extends McpServer {
       'Manage environments: list/get/create (delete unavailable — use the Coolify dashboard) (get includes dragonfly/keydb/clickhouse DBs missing from API)',
       {
         action: z.enum(['list', 'get', 'create']),
-        project_uuid: z.string(),
+        project_uuid: safeId(),
         name: z.string().optional(),
         description: z.string().optional(),
       },
@@ -570,7 +595,7 @@ export class CoolifyMcpServer extends McpServer {
     // create_key actions that need them (they would use shared team git credentials).
     const applicationShape = {
       action: z.enum(['create_public', 'create_dockerimage', 'create_dockerfile', 'update']),
-      uuid: z.string().optional(),
+      uuid: safeId().optional(),
       // Create fields
       project_uuid: z.string().optional(),
       server_uuid: z.string().optional(),
@@ -941,7 +966,7 @@ export class CoolifyMcpServer extends McpServer {
     this.tool(
       'application_logs',
       'Get app logs',
-      { uuid: z.string(), lines: z.number().optional() },
+      { uuid: safeId(), lines: z.number().optional() },
       async ({ uuid, lines }) => {
         const denied = await denyUnlessInScope(() => assertAppInScope(this.client, uuid));
         if (denied) return denied;
@@ -958,7 +983,7 @@ export class CoolifyMcpServer extends McpServer {
       {
         resource: z.enum(['application']),
         action: z.enum(['start', 'stop', 'restart']),
-        uuid: z.string(),
+        uuid: safeId(),
       },
       async ({ resource, action, uuid }) => {
         // Defence in depth: the schema already restricts this, but a caller that bypasses
@@ -1007,10 +1032,10 @@ export class CoolifyMcpServer extends McpServer {
       {
         resource: z.enum(['application']),
         action: z.enum(['list', 'create', 'update', 'delete', 'bulk_update']),
-        uuid: z.string(),
+        uuid: safeId(),
         key: z.string().optional(),
         value: z.string().optional(),
-        env_uuid: z.string().optional(),
+        env_uuid: safeId().optional(),
         is_buildtime: z.boolean().optional(),
         is_runtime: z.boolean().optional(),
         data: z
@@ -1038,7 +1063,11 @@ export class CoolifyMcpServer extends McpServer {
             ],
           };
         }
-        const denied = await denyUnlessInScope(() => assertAppInScope(this.client, uuid));
+        // Validate every path-bound id before the scope lookup so a bad one costs zero requests.
+        const denied = await denyUnlessInScope(async () => {
+          if (env_uuid !== undefined) safeSegment(env_uuid, 'env_uuid');
+          await assertAppInScope(this.client, uuid);
+        });
         if (denied) return denied;
         switch (action) {
           case 'list':
@@ -1098,7 +1127,9 @@ export class CoolifyMcpServer extends McpServer {
       'deploy',
       'Deploy an application by UUID',
       {
-        tag_or_uuid: z.string().regex(APP_UUID_RE),
+        tag_or_uuid: z
+          .string()
+          .regex(APP_UUID_RE, 'invalid_argument: must be a 24-char lowercase uuid'),
         force: z.boolean().optional(),
         wait: z
           .boolean()
@@ -1142,7 +1173,7 @@ export class CoolifyMcpServer extends McpServer {
       'Manage deployment: get/cancel/list_for_app. Logs excluded by default on all actions — for get use `lines` (paginated tail), for list_for_app use `include_logs: true` to include raw build-log blobs.',
       {
         action: z.enum(['get', 'cancel', 'list_for_app']),
-        uuid: z.string(),
+        uuid: safeId(),
         lines: z.number().optional(), // Include logs truncated to last N entries (omit for no logs)
         page: z.number().optional(), // Log page (1=most recent, 2=older, etc.)
         max_chars: z.number().optional(), // Limit log output to last N chars (default: 50000)

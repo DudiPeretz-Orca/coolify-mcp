@@ -4,6 +4,7 @@
  * obot config can widen the scope.
  */
 import type { CoolifyClient } from './coolify-client.js';
+import { safeSegment } from './path-safety.js';
 
 export const SCOPE_ENVIRONMENT_ID = 14;
 
@@ -28,6 +29,7 @@ export async function assertAppInScope(
 ): Promise<void> {
   if (typeof uuid !== 'string') throw new ScopeError(String(uuid));
   if (DENIED_APP_UUIDS.has(uuid.trim().toLowerCase())) throw new ScopeError(uuid);
+  safeSegment(uuid, 'uuid');
   if (!APP_UUID_RE.test(uuid)) throw new ScopeError(uuid);
   let environmentId: unknown;
   try {
@@ -45,7 +47,8 @@ export async function assertDeploymentInScope(
   client: Pick<CoolifyClient, 'getDeployment' | 'getApplication'>,
   deploymentUuid: string,
 ): Promise<void> {
-  if (typeof deploymentUuid !== 'string' || !APP_UUID_RE.test(deploymentUuid)) {
+  safeSegment(deploymentUuid, 'deployment uuid');
+  if (!APP_UUID_RE.test(deploymentUuid)) {
     throw new ScopeError(String(deploymentUuid));
   }
   let appUuid: unknown;

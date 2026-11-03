@@ -23,7 +23,10 @@ function res(status: number, data: unknown): Response {
   } as Response;
 }
 
+type ToolRes = { isError?: boolean; content: Array<{ text: string }> };
+
 describe('scope gate (environment 14 only)', () => {
+  let server: CoolifyMcpServer;
   const mockFetch = jest.fn<typeof fetch>();
   const realFetch = global.fetch;
   let client: Client;
@@ -59,7 +62,7 @@ describe('scope gate (environment 14 only)', () => {
       return res(200, { message: 'ok', uuid: IN_SCOPE });
     });
     global.fetch = mockFetch;
-    const server = new CoolifyMcpServer({
+    server = new CoolifyMcpServer({
       baseUrl: 'http://localhost:3000',
       accessToken: 'test-token',
       deployerUrl: 'http://deployer.invalid',
@@ -183,7 +186,27 @@ describe('scope gate (environment 14 only)', () => {
   it.each(['PVAQSZI5IVM0DNK7NHWEGJND', ' pvaqszi5ivm0dnk7nhwegjnd '])(
     'deployer uuid in other case or padded is denied (%j)',
     async (uuid) => {
-      expectDenied(await call('control', { resource: 'application', action: 'stop', uuid }));
+      // Padded/upper-case values fail the schema pattern first; either way nothing is sent.
+      const r = await call('control', { resource: 'application', action: 'stop', uuid });
+      expect(r.isError).toBe(true);
+      expect(r.text).toMatch(/out_of_scope|invalid_argument/);
+      expect(mockFetch).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(['PVAQSZI5IVM0DNK7NHWEGJND', ' pvaqszi5ivm0dnk7nhwegjnd '])(
+    'deployer uuid %j is out_of_scope when the handler is called directly (zod bypassed)',
+    async (uuid) => {
+      const handler = (
+        server as unknown as {
+          _registeredTools: Record<
+            string,
+            { handler: (a: Record<string, unknown>, e: unknown) => Promise<ToolRes> }
+          >;
+        }
+      )._registeredTools['control'].handler;
+      const r = await handler({ resource: 'application', action: 'stop', uuid }, {});
+      expectDenied({ isError: r.isError, text: r.content[0].text });
       expect(mockFetch).not.toHaveBeenCalled();
     },
   );
