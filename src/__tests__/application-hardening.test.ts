@@ -12,6 +12,8 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CoolifyMcpServer } from '../lib/mcp-server.js';
 
 const FORBIDDEN = 'custom_docker_run_options';
+// Scope gate needs a 24-char lowercase uuid and an environment-14 app (default mock response).
+const APP_UUID = 'a'.repeat(24);
 
 const EXPECTED_TOOLS = [
   'application',
@@ -50,7 +52,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
 
   beforeEach(async () => {
     mockFetch.mockReset();
-    mockFetch.mockImplementation(async () => jsonResponse({ uuid: 'app-uuid' }));
+    mockFetch.mockImplementation(async () => jsonResponse({ uuid: APP_UUID, environment_id: 14 }));
     global.fetch = mockFetch;
     // deployerUrl is set so the `artifact` tool registers and the 16-tool count is exact.
     server = new CoolifyMcpServer({
@@ -144,7 +146,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
   it('update never puts custom_docker_run_options in the PATCH body', async () => {
     await callApplication({
       action: 'update',
-      uuid: 'app-uuid',
+      uuid: APP_UUID,
       name: 'renamed',
       [FORBIDDEN]: '--privileged --cap-add=SYS_ADMIN --device=/dev/sda',
     });
@@ -156,7 +158,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
   it('update drops other unknown/undeclared keys sent by a client (zod strips them)', async () => {
     await callApplication({
       action: 'update',
-      uuid: 'app-uuid',
+      uuid: APP_UUID,
       name: 'renamed',
       ports_mappings: '22:22',
       docker_compose_raw: 'x',
@@ -186,7 +188,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     await tool.handler(
       {
         action: 'update',
-        uuid: 'app-uuid',
+        uuid: APP_UUID,
         name: 'renamed',
         [FORBIDDEN]: '--privileged',
         ports_mappings: '22:22',
@@ -202,7 +204,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
   it('update still forwards declared fields (no regression)', async () => {
     await callApplication({
       action: 'update',
-      uuid: 'app-uuid',
+      uuid: APP_UUID,
       name: 'n',
       domains: 'https://a.tools.orca-internal.net',
       health_check_enabled: true,
@@ -284,7 +286,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
   it('update never puts custom_labels, github_app_uuid or private_key_uuid in the PATCH body', async () => {
     await callApplication({
       action: 'update',
-      uuid: 'app-uuid',
+      uuid: APP_UUID,
       name: 'renamed',
       ...REMOVED_VALUES,
     });
@@ -300,7 +302,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
         >;
       }
     )._registeredTools['application'];
-    await tool.handler({ action: 'update', uuid: 'app-uuid', name: 'x', ...REMOVED_VALUES }, {});
+    await tool.handler({ action: 'update', uuid: APP_UUID, name: 'x', ...REMOVED_VALUES }, {});
     expect(JSON.parse(writeBodies()[0])).toEqual({ name: 'x' });
   });
 
@@ -344,11 +346,11 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     );
 
     it.each([
-      ['start', '/applications/app-uuid/start'],
-      ['stop', '/applications/app-uuid/stop'],
-      ['restart', '/applications/app-uuid/restart'],
+      ['start', `/applications/${APP_UUID}/start`],
+      ['stop', `/applications/${APP_UUID}/stop`],
+      ['restart', `/applications/${APP_UUID}/restart`],
     ])('application %s still works', async (action, path) => {
-      const result = await callControl({ resource: 'application', action, uuid: 'app-uuid' });
+      const result = await callControl({ resource: 'application', action, uuid: APP_UUID });
       expect(result.isError).toBeFalsy();
       const urls = mockFetch.mock.calls.map(([u]) => String(u));
       expect(urls.some((u) => u.endsWith(path))).toBe(true);
@@ -399,7 +401,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     it('update with domains', async () => {
       await callApplication({
         action: 'update',
-        uuid: 'app-uuid',
+        uuid: APP_UUID,
         domains: 'https://app.tools.orca-internal.net',
       });
       expect(JSON.parse(writeBodies()[0])).toEqual({
@@ -413,7 +415,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
         arguments: {
           resource: 'application',
           action: 'create',
-          uuid: 'app-uuid',
+          uuid: APP_UUID,
           key: 'FOO',
           value: 'bar',
         },
