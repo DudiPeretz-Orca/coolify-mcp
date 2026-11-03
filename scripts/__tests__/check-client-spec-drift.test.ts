@@ -96,6 +96,61 @@ describe('normaliseClientRoute', () => {
   });
 });
 
+describe('normaliseClientRoute with safeSegment and object-literal query builders', () => {
+  it('treats ${safeSegment(x, label)} like a plain ${x} path parameter', () => {
+    expect(normaliseClientRoute("/applications/${safeSegment(uuid, 'uuid')}/logs")).toEqual(
+      normaliseClientRoute('/applications/${uuid}/logs'),
+    );
+  });
+
+  it('drops a query builder whose argument contains braces', () => {
+    expect(
+      normaliseClientRoute(
+        "/applications/${safeSegment(uuid, 'uuid')}/logs${this.buildQueryString({ lines })}",
+      ),
+    ).toEqual(['applications', null, 'logs']);
+    expect(
+      normaliseClientRoute('/deploy${this.buildQueryString({ [param]: tagOrUuid, force })}'),
+    ).toEqual(['deploy']);
+  });
+
+  it('still fails a genuinely mismatching safeSegment-wrapped route', () => {
+    const spec = ['paths:', '  /applications/{uuid}/logs:', '    get: {}', 'components:'].join(
+      '\n',
+    );
+    const client =
+      "this.request(`/applications/${safeSegment(uuid, 'uuid')}/nope${this.buildQueryString({ a })}`)";
+    expect(findUnmatchedRoutes(client, spec)).toContain(
+      "/applications/${safeSegment(uuid, 'uuid')}/nope${this.buildQueryString({ a })}",
+    );
+  });
+});
+
+describe('normaliseClientRoute fails closed on interpolations it cannot resolve', () => {
+  const LOGS = ['applications', null, 'logs'];
+
+  it('reports an unterminated ${ as unmatched', () => {
+    const spec = ['paths:', '  /applications/{uuid}:', '    get: {}', 'components:'].join('\n');
+    const route = '/applications/${safeSegment(uuid, ' + "'uuid')" + '/x';
+    expect(findUnmatchedRoutes('this.request(`' + route + '`)', spec)).toContain(route);
+  });
+
+  it('resolves a nested template literal to the correct path', () => {
+    expect(normaliseClientRoute('/applications/${a(`x${y}z`)}/logs${this.q({ lines })}')).toEqual(
+      LOGS,
+    );
+  });
+
+  it("ignores braces inside string literals ('{' and '}')", () => {
+    expect(normaliseClientRoute("/applications/${f('{', 'a')}/logs")).toEqual(LOGS);
+    expect(normaliseClientRoute('/applications/${f("}")}/logs')).toEqual(LOGS);
+  });
+
+  it('leaves an unterminated string inside an interpolation in the route (never a silent match)', () => {
+    expect(normaliseClientRoute("/applications/${f('{}/logs")).not.toEqual(LOGS);
+  });
+});
+
 describe('normaliseSpecPath', () => {
   it('turns {param} segments into wildcards', () => {
     expect(normaliseSpecPath('/applications/{uuid}/envs/{env_uuid}')).toEqual([

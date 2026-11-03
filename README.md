@@ -25,11 +25,11 @@ This MCP server provides **16 token-optimized tools** for **debugging, managemen
 | **Infrastructure** | `get_infrastructure_overview`, `get_version`                                                                                 |
 | **Diagnostics**    | `diagnose_app`, `find_issues`                                                                                                |
 | **Servers**        | `list_servers`                                                                                                               |
-| **Projects**       | `projects` (list, get, create, update via action param — delete removed in this fork)                                        |
+| **Projects**       | `projects` (list, get, create via action param — update and delete removed in this fork)                                     |
 | **Environments**   | `environments` (list, get, create via action param — delete removed in this fork)                                            |
 | **Applications**   | `list_applications`, `application` (create/update only — delete and delete_preview removed in this fork), `application_logs` |
 | **Control**        | `control` (start/stop/restart for applications only in this fork)                                                            |
-| **Env Vars**       | `env_vars` (CRUD + bulk_update for application, service, and database env vars)                                              |
+| **Env Vars**       | `env_vars` (CRUD + bulk_update for application env vars only; values always masked)                                          |
 | **Deployments**    | `list_deployments`, `deploy`, `deployment` (get, cancel, list_for_app)                                                       |
 | **Artifacts**      | `artifact` (begin/append/upload_url/commit/status proxy to the artifact deployer; needs `DEPLOYER_URL`)                      |
 
@@ -254,6 +254,27 @@ Deploy from public repo https://github.com/org/repo
 | `COOLIFY_ACCESS_TOKEN` | Yes      | -                       | Your Coolify API token    |
 | `COOLIFY_BASE_URL`     | No       | `http://localhost:3000` | Your Coolify instance URL |
 
+## Behaviour contract (Orca fork)
+
+These rules are enforced in `src/lib/` and have no environment-variable override (`RESERVED_LABELS` below can only add restrictions).
+
+- **Scope.** Tools that act on an existing application only manage applications in the one configured Artifacts / production scope; other applications are refused with `out_of_scope:`. If scope cannot be established, the request is refused.
+- **Path values.** Every value used in a Coolify API URL path must match `^[A-Za-z0-9_-]{1,64}$`; otherwise the call fails with `invalid_argument:` before any request. Query values are encoded.
+- **Env vars.** `env_vars` works on applications only; `reveal` is removed and values are always masked.
+- **Deploy.** `deploy` takes only a 24-character lowercase alphanumeric application uuid in `tag_or_uuid`.
+- **Projects.** `projects update` is removed.
+- **Application update** refuses these 13 fields with `invalid_argument:`: `dockerfile`, `git_repository`, `git_branch`, `build_pack`, `install_command`, `build_command`, `start_command`, `base_directory`, `dockerfile_location`, `docker_registry_image_name`, `docker_registry_image_tag`, `domains`, `fqdn`. They can be set at create time only.
+- **Application create** actions place the app in the configured project, environment and server; `destination_uuid` is not accepted, and a different placement value is refused (`out_of_scope:`, or `invalid_argument:` if malformed).
+- **Domains.** On create, `domains` (and `fqdn`) must be exactly one `https://<label>.tools.orca-internal.net`: a single label, no port, path, query, fragment or credentials. The label must not be reserved (built-in `coolify`, `deployer`, `test-artifact`, plus the comma-separated `RESERVED_LABELS` environment variable, read on each call) and must not already be used by a visible application. Violations are `invalid_domain:`.
+- **Tools.** `tools/list` is exactly 16 tools.
+
+| Variable          | Description                                                                |
+| ----------------- | -------------------------------------------------------------------------- |
+| `RESERVED_LABELS` | Optional comma-separated extra host labels that application create refuses |
+| `DEPLOYER_URL`    | Artifact deployer base URL, needed by the `artifact` tool                  |
+
+This connector narrows what a shared token can do; it is not a complete boundary, and residual risks are tracked in Orca's internal documentation.
+
 ## Development
 
 ```bash
@@ -267,6 +288,12 @@ npm run build
 
 # Test
 npm test
+
+# One test file (npm test -- <name> does NOT filter)
+NODE_OPTIONS=--experimental-vm-modules npx jest --testPathPatterns <name>
+
+# Client routes vs bundled OpenAPI spec
+npm run check:spec-drift
 
 # Run locally
 COOLIFY_BASE_URL="https://your-coolify.com" \
@@ -294,7 +321,7 @@ These tools accept human-friendly identifiers instead of just UUIDs:
 
 ### Projects
 
-- `projects` - Manage projects with `action: list|get|create|update` (delete removed in this fork)
+- `projects` - Manage projects with `action: list|get|create` (update and delete removed in this fork)
 
 ### Environments
 
@@ -307,13 +334,13 @@ These tools accept human-friendly identifiers instead of just UUIDs:
 - `application` - Create or update apps with `action: create_public|create_dockerimage|create_dockerfile|update` (delete, delete_preview, create_github, create_key removed in this fork; `custom_labels` and `custom_docker_run_options` are not accepted)
   - Deploy from public repos, private GitHub, SSH keys, Docker images, or a raw Dockerfile
   - Configure health checks (path, interval, retries, etc.)
-- `env_vars` - Manage env vars with `resource: application|service|database, action: list|create|update|delete|bulk_update`
+- `env_vars` - Manage env vars with `resource: application, action: list|create|update|delete|bulk_update` (service and database env vars and `reveal` removed in this fork; values are always masked)
 - `control` - Start/stop/restart with `resource: application, action: start|stop|restart` (databases and services removed in this fork)
 
 ### Deployments
 
 - `list_deployments` - List running deployments (returns summary)
-- `deploy` - Deploy by tag or UUID
+- `deploy` - Deploy an application by UUID (`tag_or_uuid` must be a 24-character lowercase alphanumeric uuid; tags are not accepted in this fork)
 - `deployment` - Manage deployments with `action: get|cancel|list_for_app` (supports `lines` and `page` params for paginated log output with `logs_meta`)
 
 ## Why Coolify MCP?

@@ -3,6 +3,7 @@
  * Complete HTTP client for the Coolify API v1
  */
 
+import { safeSegment } from './path-safety.js';
 import type {
   CoolifyConfig,
   ErrorResponse,
@@ -629,7 +630,7 @@ export class CoolifyClient {
   }
 
   async getServer(uuid: string): Promise<Server> {
-    return this.request<Server>(`/servers/${uuid}`);
+    return this.request<Server>(`/servers/${safeSegment(uuid, 'uuid')}`);
   }
 
   async createServer(data: CreateServerRequest): Promise<UuidResponse> {
@@ -640,28 +641,28 @@ export class CoolifyClient {
   }
 
   async updateServer(uuid: string, data: UpdateServerRequest): Promise<Server> {
-    return this.request<Server>(`/servers/${uuid}`, {
+    return this.request<Server>(`/servers/${safeSegment(uuid, 'uuid')}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
   }
 
   async deleteServer(uuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/servers/${uuid}`, {
+    return this.request<MessageResponse>(`/servers/${safeSegment(uuid, 'uuid')}`, {
       method: 'DELETE',
     });
   }
 
   async getServerResources(uuid: string): Promise<ServerResource[]> {
-    return this.request<ServerResource[]>(`/servers/${uuid}/resources`);
+    return this.request<ServerResource[]>(`/servers/${safeSegment(uuid, 'uuid')}/resources`);
   }
 
   async getServerDomains(uuid: string): Promise<ServerDomain[]> {
-    return this.request<ServerDomain[]>(`/servers/${uuid}/domains`);
+    return this.request<ServerDomain[]>(`/servers/${safeSegment(uuid, 'uuid')}/domains`);
   }
 
   async validateServer(uuid: string): Promise<ServerValidation> {
-    return this.request<ServerValidation>(`/servers/${uuid}/validate`);
+    return this.request<ServerValidation>(`/servers/${safeSegment(uuid, 'uuid')}/validate`);
   }
 
   // ===========================================================================
@@ -678,7 +679,7 @@ export class CoolifyClient {
   }
 
   async getProject(uuid: string): Promise<Project> {
-    return this.request<Project>(`/projects/${uuid}`);
+    return this.request<Project>(`/projects/${safeSegment(uuid, 'uuid')}`);
   }
 
   async createProject(data: CreateProjectRequest): Promise<UuidResponse> {
@@ -689,14 +690,14 @@ export class CoolifyClient {
   }
 
   async updateProject(uuid: string, data: UpdateProjectRequest): Promise<Project> {
-    return this.request<Project>(`/projects/${uuid}`, {
+    return this.request<Project>(`/projects/${safeSegment(uuid, 'uuid')}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
   }
 
   async deleteProject(uuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/projects/${uuid}`, {
+    return this.request<MessageResponse>(`/projects/${safeSegment(uuid, 'uuid')}`, {
       method: 'DELETE',
     });
   }
@@ -706,14 +707,18 @@ export class CoolifyClient {
   // ===========================================================================
 
   async listProjectEnvironments(projectUuid: string): Promise<Environment[]> {
-    return this.request<Environment[]>(`/projects/${projectUuid}/environments`);
+    return this.request<Environment[]>(
+      `/projects/${safeSegment(projectUuid, 'projectUuid')}/environments`,
+    );
   }
 
   async getProjectEnvironment(
     projectUuid: string,
     environmentNameOrUuid: string,
   ): Promise<Environment> {
-    return this.request<Environment>(`/projects/${projectUuid}/${environmentNameOrUuid}`);
+    return this.request<Environment>(
+      `/projects/${safeSegment(projectUuid, 'projectUuid')}/${safeSegment(environmentNameOrUuid, 'environmentNameOrUuid')}`,
+    );
   }
 
   /**
@@ -732,6 +737,9 @@ export class CoolifyClient {
       clickhouses?: DatabaseSummary[];
     }
   > {
+    // Validate before the parallel fetches so a bad id costs zero requests.
+    safeSegment(projectUuid, 'projectUuid');
+    safeSegment(environmentNameOrUuid, 'environmentNameOrUuid');
     const [environment, dbSummaries] = await Promise.all([
       this.getProjectEnvironment(projectUuid, environmentNameOrUuid),
       this.listDatabases({ summary: true }) as Promise<DatabaseSummary[]>,
@@ -761,10 +769,13 @@ export class CoolifyClient {
     projectUuid: string,
     data: CreateEnvironmentRequest,
   ): Promise<UuidResponse> {
-    return this.request<UuidResponse>(`/projects/${projectUuid}/environments`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return this.request<UuidResponse>(
+      `/projects/${safeSegment(projectUuid, 'projectUuid')}/environments`,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      },
+    );
   }
 
   async deleteProjectEnvironment(
@@ -772,7 +783,7 @@ export class CoolifyClient {
     environmentNameOrUuid: string,
   ): Promise<MessageResponse> {
     return this.request<MessageResponse>(
-      `/projects/${projectUuid}/environments/${environmentNameOrUuid}`,
+      `/projects/${safeSegment(projectUuid, 'projectUuid')}/environments/${safeSegment(environmentNameOrUuid, 'environmentNameOrUuid')}`,
       {
         method: 'DELETE',
       },
@@ -793,7 +804,7 @@ export class CoolifyClient {
   }
 
   async getApplication(uuid: string): Promise<Application> {
-    return this.request<Application>(`/applications/${uuid}`);
+    return this.request<Application>(`/applications/${safeSegment(uuid, 'uuid')}`);
   }
 
   async createApplicationPublic(data: CreateApplicationPublicRequest): Promise<UuidResponse> {
@@ -863,7 +874,7 @@ export class CoolifyClient {
     if (mapped.docker_compose_raw) {
       (payload as Record<string, unknown>).docker_compose_raw = toBase64(mapped.docker_compose_raw);
     }
-    return this.request<Application>(`/applications/${uuid}`, {
+    return this.request<Application>(`/applications/${safeSegment(uuid, 'uuid')}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
     });
@@ -876,13 +887,15 @@ export class CoolifyClient {
       docker_cleanup: options?.dockerCleanup,
       delete_connected_networks: options?.deleteConnectedNetworks,
     });
-    return this.request<MessageResponse>(`/applications/${uuid}${query}`, {
+    return this.request<MessageResponse>(`/applications/${safeSegment(uuid, 'uuid')}${query}`, {
       method: 'DELETE',
     });
   }
 
   async getApplicationLogs(uuid: string, lines: number = 100): Promise<string> {
-    return this.request<string>(`/applications/${uuid}/logs?lines=${lines}`);
+    return this.request<string>(
+      `/applications/${safeSegment(uuid, 'uuid')}/logs${this.buildQueryString({ lines })}`,
+    );
   }
 
   async startApplication(
@@ -893,21 +906,30 @@ export class CoolifyClient {
       force: options?.force,
       instant_deploy: options?.instant_deploy,
     });
-    return this.request<ApplicationActionResponse>(`/applications/${uuid}/start${query}`, {
-      method: 'POST',
-    });
+    return this.request<ApplicationActionResponse>(
+      `/applications/${safeSegment(uuid, 'uuid')}/start${query}`,
+      {
+        method: 'POST',
+      },
+    );
   }
 
   async stopApplication(uuid: string): Promise<ApplicationActionResponse> {
-    return this.request<ApplicationActionResponse>(`/applications/${uuid}/stop`, {
-      method: 'POST',
-    });
+    return this.request<ApplicationActionResponse>(
+      `/applications/${safeSegment(uuid, 'uuid')}/stop`,
+      {
+        method: 'POST',
+      },
+    );
   }
 
   async restartApplication(uuid: string): Promise<ApplicationActionResponse> {
-    return this.request<ApplicationActionResponse>(`/applications/${uuid}/restart`, {
-      method: 'POST',
-    });
+    return this.request<ApplicationActionResponse>(
+      `/applications/${safeSegment(uuid, 'uuid')}/restart`,
+      {
+        method: 'POST',
+      },
+    );
   }
 
   // ===========================================================================
@@ -925,7 +947,9 @@ export class CoolifyClient {
     uuid: string,
     options?: { summary?: boolean; reveal?: boolean },
   ): Promise<EnvironmentVariable[] | EnvVarSummary[]> {
-    const envVars = await this.request<EnvironmentVariable[]>(`/applications/${uuid}/envs`);
+    const envVars = await this.request<EnvironmentVariable[]>(
+      `/applications/${safeSegment(uuid, 'uuid')}/envs`,
+    );
     const reveal = options?.reveal === true;
     if (options?.summary) {
       const summaries = envVars.map(toEnvVarSummary);
@@ -935,14 +959,14 @@ export class CoolifyClient {
   }
 
   async createApplicationEnvVar(uuid: string, data: CreateEnvVarRequest): Promise<UuidResponse> {
-    return this.request<UuidResponse>(`/applications/${uuid}/envs`, {
+    return this.request<UuidResponse>(`/applications/${safeSegment(uuid, 'uuid')}/envs`, {
       method: 'POST',
       body: JSON.stringify(cleanRequestData(data)),
     });
   }
 
   async updateApplicationEnvVar(uuid: string, data: UpdateEnvVarRequest): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/applications/${uuid}/envs`, {
+    return this.request<MessageResponse>(`/applications/${safeSegment(uuid, 'uuid')}/envs`, {
       method: 'PATCH',
       body: JSON.stringify(cleanRequestData(data)),
     });
@@ -952,16 +976,19 @@ export class CoolifyClient {
     uuid: string,
     data: BulkUpdateEnvVarsRequest,
   ): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/applications/${uuid}/envs/bulk`, {
+    return this.request<MessageResponse>(`/applications/${safeSegment(uuid, 'uuid')}/envs/bulk`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
   }
 
   async deleteApplicationEnvVar(uuid: string, envUuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/applications/${uuid}/envs/${envUuid}`, {
-      method: 'DELETE',
-    });
+    return this.request<MessageResponse>(
+      `/applications/${safeSegment(uuid, 'uuid')}/envs/${safeSegment(envUuid, 'envUuid')}`,
+      {
+        method: 'DELETE',
+      },
+    );
   }
 
   // ===========================================================================
@@ -978,11 +1005,11 @@ export class CoolifyClient {
   }
 
   async getDatabase(uuid: string): Promise<Database> {
-    return this.request<Database>(`/databases/${uuid}`);
+    return this.request<Database>(`/databases/${safeSegment(uuid, 'uuid')}`);
   }
 
   async updateDatabase(uuid: string, data: UpdateDatabaseRequest): Promise<Database> {
-    return this.request<Database>(`/databases/${uuid}`, {
+    return this.request<Database>(`/databases/${safeSegment(uuid, 'uuid')}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
@@ -995,25 +1022,25 @@ export class CoolifyClient {
       docker_cleanup: options?.dockerCleanup,
       delete_connected_networks: options?.deleteConnectedNetworks,
     });
-    return this.request<MessageResponse>(`/databases/${uuid}${query}`, {
+    return this.request<MessageResponse>(`/databases/${safeSegment(uuid, 'uuid')}${query}`, {
       method: 'DELETE',
     });
   }
 
   async startDatabase(uuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/databases/${uuid}/start`, {
+    return this.request<MessageResponse>(`/databases/${safeSegment(uuid, 'uuid')}/start`, {
       method: 'POST',
     });
   }
 
   async stopDatabase(uuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/databases/${uuid}/stop`, {
+    return this.request<MessageResponse>(`/databases/${safeSegment(uuid, 'uuid')}/stop`, {
       method: 'POST',
     });
   }
 
   async restartDatabase(uuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/databases/${uuid}/restart`, {
+    return this.request<MessageResponse>(`/databases/${safeSegment(uuid, 'uuid')}/restart`, {
       method: 'POST',
     });
   }
@@ -1089,7 +1116,7 @@ export class CoolifyClient {
   }
 
   async getService(uuid: string): Promise<Service> {
-    return this.request<Service>(`/services/${uuid}`);
+    return this.request<Service>(`/services/${safeSegment(uuid, 'uuid')}`);
   }
 
   async createService(data: CreateServiceRequest): Promise<ServiceCreateResponse> {
@@ -1108,7 +1135,7 @@ export class CoolifyClient {
     if (payload.docker_compose_raw) {
       payload.docker_compose_raw = toBase64(payload.docker_compose_raw);
     }
-    return this.request<Service>(`/services/${uuid}`, {
+    return this.request<Service>(`/services/${safeSegment(uuid, 'uuid')}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
     });
@@ -1121,26 +1148,26 @@ export class CoolifyClient {
       docker_cleanup: options?.dockerCleanup,
       delete_connected_networks: options?.deleteConnectedNetworks,
     });
-    return this.request<MessageResponse>(`/services/${uuid}${query}`, {
+    return this.request<MessageResponse>(`/services/${safeSegment(uuid, 'uuid')}${query}`, {
       method: 'DELETE',
     });
   }
 
   async startService(uuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/services/${uuid}/start`, {
+    return this.request<MessageResponse>(`/services/${safeSegment(uuid, 'uuid')}/start`, {
       method: 'GET',
     });
   }
 
   async stopService(uuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/services/${uuid}/stop`, {
+    return this.request<MessageResponse>(`/services/${safeSegment(uuid, 'uuid')}/stop`, {
       method: 'GET',
     });
   }
 
   async restartService(uuid: string, pullLatest = false): Promise<MessageResponse> {
     const qs = pullLatest ? '?latest=true' : '';
-    return this.request<MessageResponse>(`/services/${uuid}/restart${qs}`, {
+    return this.request<MessageResponse>(`/services/${safeSegment(uuid, 'uuid')}/restart${qs}`, {
       method: 'GET',
     });
   }
@@ -1160,28 +1187,33 @@ export class CoolifyClient {
     uuid: string,
     options?: { reveal?: boolean },
   ): Promise<EnvironmentVariable[]> {
-    const envVars = await this.request<EnvironmentVariable[]>(`/services/${uuid}/envs`);
+    const envVars = await this.request<EnvironmentVariable[]>(
+      `/services/${safeSegment(uuid, 'uuid')}/envs`,
+    );
     return options?.reveal === true ? envVars : envVars.map(maskEnvVar);
   }
 
   async createServiceEnvVar(uuid: string, data: CreateEnvVarRequest): Promise<UuidResponse> {
-    return this.request<UuidResponse>(`/services/${uuid}/envs`, {
+    return this.request<UuidResponse>(`/services/${safeSegment(uuid, 'uuid')}/envs`, {
       method: 'POST',
       body: JSON.stringify(cleanRequestData(data)),
     });
   }
 
   async updateServiceEnvVar(uuid: string, data: UpdateEnvVarRequest): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/services/${uuid}/envs`, {
+    return this.request<MessageResponse>(`/services/${safeSegment(uuid, 'uuid')}/envs`, {
       method: 'PATCH',
       body: JSON.stringify(cleanRequestData(data)),
     });
   }
 
   async deleteServiceEnvVar(uuid: string, envUuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/services/${uuid}/envs/${envUuid}`, {
-      method: 'DELETE',
-    });
+    return this.request<MessageResponse>(
+      `/services/${safeSegment(uuid, 'uuid')}/envs/${safeSegment(envUuid, 'envUuid')}`,
+      {
+        method: 'DELETE',
+      },
+    );
   }
 
   // ===========================================================================
@@ -1203,7 +1235,7 @@ export class CoolifyClient {
     uuid: string,
     options?: { includeLogs?: boolean },
   ): Promise<DeploymentEssential> {
-    const deployment = await this.request<Deployment>(`/deployments/${uuid}`);
+    const deployment = await this.request<Deployment>(`/deployments/${safeSegment(uuid, 'uuid')}`);
     const essential = toDeploymentEssential(deployment);
     // Attach the raw log string (never the raw upstream object, which also embeds
     // the full application/server graph and secrets) onto the essential projection.
@@ -1220,7 +1252,7 @@ export class CoolifyClient {
     // Detect if the value looks like a UUID or a tag name
     const param = this.isLikelyUuid(tagOrUuid) ? 'uuid' : 'tag';
     return this.request<DeployTriggerResponse>(
-      `/deploy?${param}=${encodeURIComponent(tagOrUuid)}&force=${force}`,
+      `/deploy${this.buildQueryString({ [param]: tagOrUuid, force })}`,
       // POST required from v4.2 and accepted long before it (`match(['get','post'])`).
       { method: 'POST' },
     );
@@ -1244,7 +1276,7 @@ export class CoolifyClient {
     options?: { includeLogs?: boolean },
   ): Promise<{ count: number; deployments: DeploymentEssential[] }> {
     const envelope = await this.request<{ count: number; deployments: Deployment[] }>(
-      `/deployments/applications/${appUuid}`,
+      `/deployments/applications/${safeSegment(appUuid, 'appUuid')}`,
     );
     const deployments = Array.isArray(envelope?.deployments) ? envelope.deployments : [];
     return {
@@ -1268,11 +1300,11 @@ export class CoolifyClient {
   }
 
   async getTeam(id: number): Promise<Team> {
-    return this.request<Team>(`/teams/${id}`);
+    return this.request<Team>(`/teams/${safeSegment(id, 'id')}`);
   }
 
   async getTeamMembers(id: number): Promise<TeamMember[]> {
-    return this.request<TeamMember[]>(`/teams/${id}/members`);
+    return this.request<TeamMember[]>(`/teams/${safeSegment(id, 'id')}/members`);
   }
 
   async getCurrentTeam(): Promise<Team> {
@@ -1292,7 +1324,7 @@ export class CoolifyClient {
   }
 
   async getPrivateKey(uuid: string): Promise<PrivateKey> {
-    return this.request<PrivateKey>(`/security/keys/${uuid}`);
+    return this.request<PrivateKey>(`/security/keys/${safeSegment(uuid, 'uuid')}`);
   }
 
   async createPrivateKey(data: CreatePrivateKeyRequest): Promise<UuidResponse> {
@@ -1303,14 +1335,14 @@ export class CoolifyClient {
   }
 
   async updatePrivateKey(uuid: string, data: UpdatePrivateKeyRequest): Promise<PrivateKey> {
-    return this.request<PrivateKey>(`/security/keys/${uuid}`, {
+    return this.request<PrivateKey>(`/security/keys/${safeSegment(uuid, 'uuid')}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
   }
 
   async deletePrivateKey(uuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/security/keys/${uuid}`, {
+    return this.request<MessageResponse>(`/security/keys/${safeSegment(uuid, 'uuid')}`, {
       method: 'DELETE',
     });
   }
@@ -1335,14 +1367,14 @@ export class CoolifyClient {
     id: number,
     data: UpdateGitHubAppRequest,
   ): Promise<GitHubAppUpdateResponse> {
-    return this.request<GitHubAppUpdateResponse>(`/github-apps/${id}`, {
+    return this.request<GitHubAppUpdateResponse>(`/github-apps/${safeSegment(id, 'id')}`, {
       method: 'PATCH',
       body: JSON.stringify(cleanRequestData(data)),
     });
   }
 
   async deleteGitHubApp(id: number): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/github-apps/${id}`, {
+    return this.request<MessageResponse>(`/github-apps/${safeSegment(id, 'id')}`, {
       method: 'DELETE',
     });
   }
@@ -1356,7 +1388,7 @@ export class CoolifyClient {
   }
 
   async getCloudToken(uuid: string): Promise<CloudToken> {
-    return this.request<CloudToken>(`/cloud-tokens/${uuid}`);
+    return this.request<CloudToken>(`/cloud-tokens/${safeSegment(uuid, 'uuid')}`);
   }
 
   async createCloudToken(data: CreateCloudTokenRequest): Promise<UuidResponse> {
@@ -1367,20 +1399,23 @@ export class CoolifyClient {
   }
 
   async updateCloudToken(uuid: string, data: UpdateCloudTokenRequest): Promise<CloudToken> {
-    return this.request<CloudToken>(`/cloud-tokens/${uuid}`, {
+    return this.request<CloudToken>(`/cloud-tokens/${safeSegment(uuid, 'uuid')}`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
   }
 
   async deleteCloudToken(uuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/cloud-tokens/${uuid}`, {
+    return this.request<MessageResponse>(`/cloud-tokens/${safeSegment(uuid, 'uuid')}`, {
       method: 'DELETE',
     });
   }
 
   async validateCloudToken(uuid: string): Promise<CloudTokenValidation> {
-    return this.request<CloudTokenValidation>(`/cloud-tokens/${uuid}/validate`, { method: 'POST' });
+    return this.request<CloudTokenValidation>(
+      `/cloud-tokens/${safeSegment(uuid, 'uuid')}/validate`,
+      { method: 'POST' },
+    );
   }
 
   // ===========================================================================
@@ -1388,16 +1423,20 @@ export class CoolifyClient {
   // ===========================================================================
 
   async listDatabaseBackups(databaseUuid: string): Promise<DatabaseBackup[]> {
-    return this.request<DatabaseBackup[]>(`/databases/${databaseUuid}/backups`);
+    return this.request<DatabaseBackup[]>(
+      `/databases/${safeSegment(databaseUuid, 'databaseUuid')}/backups`,
+    );
   }
 
   async getDatabaseBackup(databaseUuid: string, backupUuid: string): Promise<DatabaseBackup> {
-    return this.request<DatabaseBackup>(`/databases/${databaseUuid}/backups/${backupUuid}`);
+    return this.request<DatabaseBackup>(
+      `/databases/${safeSegment(databaseUuid, 'databaseUuid')}/backups/${safeSegment(backupUuid, 'backupUuid')}`,
+    );
   }
 
   async listBackupExecutions(databaseUuid: string, backupUuid: string): Promise<BackupExecution[]> {
     return this.request<BackupExecution[]>(
-      `/databases/${databaseUuid}/backups/${backupUuid}/executions`,
+      `/databases/${safeSegment(databaseUuid, 'databaseUuid')}/backups/${safeSegment(backupUuid, 'backupUuid')}/executions`,
     );
   }
 
@@ -1407,7 +1446,7 @@ export class CoolifyClient {
     executionUuid: string,
   ): Promise<BackupExecution> {
     return this.request<BackupExecution>(
-      `/databases/${databaseUuid}/backups/${backupUuid}/executions/${executionUuid}`,
+      `/databases/${safeSegment(databaseUuid, 'databaseUuid')}/backups/${safeSegment(backupUuid, 'backupUuid')}/executions/${safeSegment(executionUuid, 'executionUuid')}`,
     );
   }
 
@@ -1415,10 +1454,13 @@ export class CoolifyClient {
     databaseUuid: string,
     data: CreateDatabaseBackupRequest,
   ): Promise<DatabaseBackup> {
-    return this.request<DatabaseBackup>(`/databases/${databaseUuid}/backups`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return this.request<DatabaseBackup>(
+      `/databases/${safeSegment(databaseUuid, 'databaseUuid')}/backups`,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      },
+    );
   }
 
   async updateDatabaseBackup(
@@ -1426,16 +1468,22 @@ export class CoolifyClient {
     backupUuid: string,
     data: UpdateDatabaseBackupRequest,
   ): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/databases/${databaseUuid}/backups/${backupUuid}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    });
+    return this.request<MessageResponse>(
+      `/databases/${safeSegment(databaseUuid, 'databaseUuid')}/backups/${safeSegment(backupUuid, 'backupUuid')}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      },
+    );
   }
 
   async deleteDatabaseBackup(databaseUuid: string, backupUuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/databases/${databaseUuid}/backups/${backupUuid}`, {
-      method: 'DELETE',
-    });
+    return this.request<MessageResponse>(
+      `/databases/${safeSegment(databaseUuid, 'databaseUuid')}/backups/${safeSegment(backupUuid, 'backupUuid')}`,
+      {
+        method: 'DELETE',
+      },
+    );
   }
 
   // ===========================================================================
@@ -1443,14 +1491,14 @@ export class CoolifyClient {
   // ===========================================================================
 
   async listApplicationStorages(uuid: string): Promise<StorageListResponse> {
-    return this.request<StorageListResponse>(`/applications/${uuid}/storages`);
+    return this.request<StorageListResponse>(`/applications/${safeSegment(uuid, 'uuid')}/storages`);
   }
 
   async createApplicationStorage(
     uuid: string,
     data: CreateStorageRequest,
   ): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/applications/${uuid}/storages`, {
+    return this.request<MessageResponse>(`/applications/${safeSegment(uuid, 'uuid')}/storages`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -1460,16 +1508,19 @@ export class CoolifyClient {
     uuid: string,
     data: UpdateStorageRequest,
   ): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/applications/${uuid}/storages`, {
+    return this.request<MessageResponse>(`/applications/${safeSegment(uuid, 'uuid')}/storages`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
   }
 
   async deleteApplicationStorage(uuid: string, storageUuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/applications/${uuid}/storages/${storageUuid}`, {
-      method: 'DELETE',
-    });
+    return this.request<MessageResponse>(
+      `/applications/${safeSegment(uuid, 'uuid')}/storages/${safeSegment(storageUuid, 'storageUuid')}`,
+      {
+        method: 'DELETE',
+      },
+    );
   }
 
   // ===========================================================================
@@ -1477,17 +1528,22 @@ export class CoolifyClient {
   // ===========================================================================
 
   async listApplicationScheduledTasks(uuid: string): Promise<ScheduledTask[]> {
-    return this.request<ScheduledTask[]>(`/applications/${uuid}/scheduled-tasks`);
+    return this.request<ScheduledTask[]>(
+      `/applications/${safeSegment(uuid, 'uuid')}/scheduled-tasks`,
+    );
   }
 
   async createApplicationScheduledTask(
     uuid: string,
     data: CreateScheduledTaskRequest,
   ): Promise<ScheduledTask> {
-    return this.request<ScheduledTask>(`/applications/${uuid}/scheduled-tasks`, {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
+    return this.request<ScheduledTask>(
+      `/applications/${safeSegment(uuid, 'uuid')}/scheduled-tasks`,
+      {
+        method: 'POST',
+        body: JSON.stringify(data),
+      },
+    );
   }
 
   async updateApplicationScheduledTask(
@@ -1495,16 +1551,22 @@ export class CoolifyClient {
     taskUuid: string,
     data: UpdateScheduledTaskRequest,
   ): Promise<ScheduledTask> {
-    return this.request<ScheduledTask>(`/applications/${uuid}/scheduled-tasks/${taskUuid}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    });
+    return this.request<ScheduledTask>(
+      `/applications/${safeSegment(uuid, 'uuid')}/scheduled-tasks/${safeSegment(taskUuid, 'taskUuid')}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      },
+    );
   }
 
   async deleteApplicationScheduledTask(uuid: string, taskUuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/applications/${uuid}/scheduled-tasks/${taskUuid}`, {
-      method: 'DELETE',
-    });
+    return this.request<MessageResponse>(
+      `/applications/${safeSegment(uuid, 'uuid')}/scheduled-tasks/${safeSegment(taskUuid, 'taskUuid')}`,
+      {
+        method: 'DELETE',
+      },
+    );
   }
 
   async listApplicationScheduledTaskExecutions(
@@ -1512,7 +1574,7 @@ export class CoolifyClient {
     taskUuid: string,
   ): Promise<ScheduledTaskExecution[]> {
     return this.request<ScheduledTaskExecution[]>(
-      `/applications/${uuid}/scheduled-tasks/${taskUuid}/executions`,
+      `/applications/${safeSegment(uuid, 'uuid')}/scheduled-tasks/${safeSegment(taskUuid, 'taskUuid')}/executions`,
     );
   }
 
@@ -1521,9 +1583,12 @@ export class CoolifyClient {
   // ===========================================================================
 
   async deleteApplicationPreview(uuid: string, pullRequestId: number): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/applications/${uuid}/previews/${pullRequestId}`, {
-      method: 'DELETE',
-    });
+    return this.request<MessageResponse>(
+      `/applications/${safeSegment(uuid, 'uuid')}/previews/${safeSegment(pullRequestId, 'pullRequestId')}`,
+      {
+        method: 'DELETE',
+      },
+    );
   }
 
   // ===========================================================================
@@ -1531,18 +1596,18 @@ export class CoolifyClient {
   // ===========================================================================
 
   async listDatabaseEnvVars(uuid: string): Promise<EnvironmentVariable[]> {
-    return this.request<EnvironmentVariable[]>(`/databases/${uuid}/envs`);
+    return this.request<EnvironmentVariable[]>(`/databases/${safeSegment(uuid, 'uuid')}/envs`);
   }
 
   async createDatabaseEnvVar(uuid: string, data: CreateEnvVarRequest): Promise<UuidResponse> {
-    return this.request<UuidResponse>(`/databases/${uuid}/envs`, {
+    return this.request<UuidResponse>(`/databases/${safeSegment(uuid, 'uuid')}/envs`, {
       method: 'POST',
       body: JSON.stringify(cleanRequestData(data)),
     });
   }
 
   async updateDatabaseEnvVar(uuid: string, data: UpdateEnvVarRequest): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/databases/${uuid}/envs`, {
+    return this.request<MessageResponse>(`/databases/${safeSegment(uuid, 'uuid')}/envs`, {
       method: 'PATCH',
       body: JSON.stringify(cleanRequestData(data)),
     });
@@ -1552,16 +1617,19 @@ export class CoolifyClient {
     uuid: string,
     data: BulkUpdateEnvVarsRequest,
   ): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/databases/${uuid}/envs/bulk`, {
+    return this.request<MessageResponse>(`/databases/${safeSegment(uuid, 'uuid')}/envs/bulk`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
   }
 
   async deleteDatabaseEnvVar(uuid: string, envUuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/databases/${uuid}/envs/${envUuid}`, {
-      method: 'DELETE',
-    });
+    return this.request<MessageResponse>(
+      `/databases/${safeSegment(uuid, 'uuid')}/envs/${safeSegment(envUuid, 'envUuid')}`,
+      {
+        method: 'DELETE',
+      },
+    );
   }
 
   // ===========================================================================
@@ -1569,27 +1637,30 @@ export class CoolifyClient {
   // ===========================================================================
 
   async listDatabaseStorages(uuid: string): Promise<StorageListResponse> {
-    return this.request<StorageListResponse>(`/databases/${uuid}/storages`);
+    return this.request<StorageListResponse>(`/databases/${safeSegment(uuid, 'uuid')}/storages`);
   }
 
   async createDatabaseStorage(uuid: string, data: CreateStorageRequest): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/databases/${uuid}/storages`, {
+    return this.request<MessageResponse>(`/databases/${safeSegment(uuid, 'uuid')}/storages`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   async updateDatabaseStorage(uuid: string, data: UpdateStorageRequest): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/databases/${uuid}/storages`, {
+    return this.request<MessageResponse>(`/databases/${safeSegment(uuid, 'uuid')}/storages`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
   }
 
   async deleteDatabaseStorage(uuid: string, storageUuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/databases/${uuid}/storages/${storageUuid}`, {
-      method: 'DELETE',
-    });
+    return this.request<MessageResponse>(
+      `/databases/${safeSegment(uuid, 'uuid')}/storages/${safeSegment(storageUuid, 'storageUuid')}`,
+      {
+        method: 'DELETE',
+      },
+    );
   }
 
   // ===========================================================================
@@ -1602,7 +1673,7 @@ export class CoolifyClient {
     executionUuid: string,
   ): Promise<MessageResponse> {
     return this.request<MessageResponse>(
-      `/databases/${databaseUuid}/backups/${backupUuid}/executions/${executionUuid}`,
+      `/databases/${safeSegment(databaseUuid, 'databaseUuid')}/backups/${safeSegment(backupUuid, 'backupUuid')}/executions/${safeSegment(executionUuid, 'executionUuid')}`,
       { method: 'DELETE' },
     );
   }
@@ -1615,7 +1686,7 @@ export class CoolifyClient {
     uuid: string,
     data: BulkUpdateEnvVarsRequest,
   ): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/services/${uuid}/envs/bulk`, {
+    return this.request<MessageResponse>(`/services/${safeSegment(uuid, 'uuid')}/envs/bulk`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
@@ -1626,27 +1697,30 @@ export class CoolifyClient {
   // ===========================================================================
 
   async listServiceStorages(uuid: string): Promise<StorageListResponse> {
-    return this.request<StorageListResponse>(`/services/${uuid}/storages`);
+    return this.request<StorageListResponse>(`/services/${safeSegment(uuid, 'uuid')}/storages`);
   }
 
   async createServiceStorage(uuid: string, data: CreateStorageRequest): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/services/${uuid}/storages`, {
+    return this.request<MessageResponse>(`/services/${safeSegment(uuid, 'uuid')}/storages`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
   }
 
   async updateServiceStorage(uuid: string, data: UpdateStorageRequest): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/services/${uuid}/storages`, {
+    return this.request<MessageResponse>(`/services/${safeSegment(uuid, 'uuid')}/storages`, {
       method: 'PATCH',
       body: JSON.stringify(data),
     });
   }
 
   async deleteServiceStorage(uuid: string, storageUuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/services/${uuid}/storages/${storageUuid}`, {
-      method: 'DELETE',
-    });
+    return this.request<MessageResponse>(
+      `/services/${safeSegment(uuid, 'uuid')}/storages/${safeSegment(storageUuid, 'storageUuid')}`,
+      {
+        method: 'DELETE',
+      },
+    );
   }
 
   // ===========================================================================
@@ -1654,14 +1728,14 @@ export class CoolifyClient {
   // ===========================================================================
 
   async listServiceScheduledTasks(uuid: string): Promise<ScheduledTask[]> {
-    return this.request<ScheduledTask[]>(`/services/${uuid}/scheduled-tasks`);
+    return this.request<ScheduledTask[]>(`/services/${safeSegment(uuid, 'uuid')}/scheduled-tasks`);
   }
 
   async createServiceScheduledTask(
     uuid: string,
     data: CreateScheduledTaskRequest,
   ): Promise<ScheduledTask> {
-    return this.request<ScheduledTask>(`/services/${uuid}/scheduled-tasks`, {
+    return this.request<ScheduledTask>(`/services/${safeSegment(uuid, 'uuid')}/scheduled-tasks`, {
       method: 'POST',
       body: JSON.stringify(data),
     });
@@ -1672,16 +1746,22 @@ export class CoolifyClient {
     taskUuid: string,
     data: UpdateScheduledTaskRequest,
   ): Promise<ScheduledTask> {
-    return this.request<ScheduledTask>(`/services/${uuid}/scheduled-tasks/${taskUuid}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    });
+    return this.request<ScheduledTask>(
+      `/services/${safeSegment(uuid, 'uuid')}/scheduled-tasks/${safeSegment(taskUuid, 'taskUuid')}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(data),
+      },
+    );
   }
 
   async deleteServiceScheduledTask(uuid: string, taskUuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/services/${uuid}/scheduled-tasks/${taskUuid}`, {
-      method: 'DELETE',
-    });
+    return this.request<MessageResponse>(
+      `/services/${safeSegment(uuid, 'uuid')}/scheduled-tasks/${safeSegment(taskUuid, 'taskUuid')}`,
+      {
+        method: 'DELETE',
+      },
+    );
   }
 
   async listServiceScheduledTaskExecutions(
@@ -1689,7 +1769,7 @@ export class CoolifyClient {
     taskUuid: string,
   ): Promise<ScheduledTaskExecution[]> {
     return this.request<ScheduledTaskExecution[]>(
-      `/services/${uuid}/scheduled-tasks/${taskUuid}/executions`,
+      `/services/${safeSegment(uuid, 'uuid')}/scheduled-tasks/${safeSegment(taskUuid, 'taskUuid')}/executions`,
     );
   }
 
@@ -1699,25 +1779,25 @@ export class CoolifyClient {
 
   async listHetznerLocations(tokenUuid: string): Promise<HetznerLocation[]> {
     return this.request<HetznerLocation[]>(
-      `/hetzner/locations?cloud_provider_token_uuid=${encodeURIComponent(tokenUuid)}`,
+      `/hetzner/locations?cloud_provider_token_uuid=${safeSegment(tokenUuid, 'tokenUuid')}`,
     );
   }
 
   async listHetznerServerTypes(tokenUuid: string): Promise<HetznerServerType[]> {
     return this.request<HetznerServerType[]>(
-      `/hetzner/server-types?cloud_provider_token_uuid=${encodeURIComponent(tokenUuid)}`,
+      `/hetzner/server-types?cloud_provider_token_uuid=${safeSegment(tokenUuid, 'tokenUuid')}`,
     );
   }
 
   async listHetznerImages(tokenUuid: string): Promise<HetznerImage[]> {
     return this.request<HetznerImage[]>(
-      `/hetzner/images?cloud_provider_token_uuid=${encodeURIComponent(tokenUuid)}`,
+      `/hetzner/images?cloud_provider_token_uuid=${safeSegment(tokenUuid, 'tokenUuid')}`,
     );
   }
 
   async listHetznerSSHKeys(tokenUuid: string): Promise<HetznerSSHKey[]> {
     return this.request<HetznerSSHKey[]>(
-      `/hetzner/ssh-keys?cloud_provider_token_uuid=${encodeURIComponent(tokenUuid)}`,
+      `/hetzner/ssh-keys?cloud_provider_token_uuid=${safeSegment(tokenUuid, 'tokenUuid')}`,
     );
   }
 
@@ -1736,7 +1816,7 @@ export class CoolifyClient {
 
   async listGitHubAppRepositories(githubAppId: number): Promise<GitHubRepository[]> {
     const response = await this.request<{ repositories: GitHubRepository[] }>(
-      `/github-apps/${githubAppId}/repositories`,
+      `/github-apps/${safeSegment(githubAppId, 'githubAppId')}/repositories`,
     );
     return response.repositories ?? [];
   }
@@ -1747,7 +1827,7 @@ export class CoolifyClient {
     repo: string,
   ): Promise<GitHubBranch[]> {
     return this.request<GitHubBranch[]>(
-      `/github-apps/${githubAppId}/repositories/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/branches`,
+      `/github-apps/${safeSegment(githubAppId, 'githubAppId')}/repositories/${safeSegment(owner, 'owner')}/${safeSegment(repo, 'repo')}/branches`,
     );
   }
 
@@ -1806,7 +1886,7 @@ export class CoolifyClient {
   // ===========================================================================
 
   async cancelDeployment(uuid: string): Promise<MessageResponse> {
-    return this.request<MessageResponse>(`/deployments/${uuid}/cancel`, {
+    return this.request<MessageResponse>(`/deployments/${safeSegment(uuid, 'uuid')}/cancel`, {
       method: 'POST',
     });
   }

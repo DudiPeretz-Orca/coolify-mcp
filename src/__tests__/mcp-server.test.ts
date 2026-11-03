@@ -16,6 +16,10 @@ import {
   getPagination,
 } from '../lib/mcp-server.js';
 
+// Scope gate (src/lib/scope.ts) needs 24-char lowercase uuids and an environment-14 app.
+const APP_UUID = 'a'.repeat(24);
+const DEPLOYMENT_UUID = 'd'.repeat(24);
+
 describe('CoolifyMcpServer v2', () => {
   let server: CoolifyMcpServer;
 
@@ -24,6 +28,11 @@ describe('CoolifyMcpServer v2', () => {
       baseUrl: 'http://localhost:3000',
       accessToken: 'test-token',
     });
+    // These tests cover handler wiring, not scope: every app is reported as in scope.
+    // Scope behaviour itself is covered in scope-gate.test.ts.
+    jest
+      .spyOn(server['client'], 'getApplication')
+      .mockResolvedValue({ environment_id: 14 } as never);
   });
 
   describe('constructor', () => {
@@ -291,14 +300,14 @@ describe('CoolifyMcpServer v2', () => {
       await callEnvVars(server, {
         resource: 'application',
         action: 'create',
-        uuid: 'app-uuid',
+        uuid: APP_UUID,
         key: 'PEM_KEY',
         value: '-----BEGIN-----',
         is_buildtime: false,
         is_runtime: true,
       });
 
-      expect(spy).toHaveBeenCalledWith('app-uuid', {
+      expect(spy).toHaveBeenCalledWith(APP_UUID, {
         key: 'PEM_KEY',
         value: '-----BEGIN-----',
         is_buildtime: false,
@@ -314,14 +323,14 @@ describe('CoolifyMcpServer v2', () => {
       await callEnvVars(server, {
         resource: 'application',
         action: 'update',
-        uuid: 'app-uuid',
+        uuid: APP_UUID,
         key: 'NODE_ENV',
         value: 'production',
         is_buildtime: false,
         is_runtime: true,
       });
 
-      expect(spy).toHaveBeenCalledWith('app-uuid', {
+      expect(spy).toHaveBeenCalledWith(APP_UUID, {
         key: 'NODE_ENV',
         value: 'production',
         is_buildtime: false,
@@ -329,43 +338,26 @@ describe('CoolifyMcpServer v2', () => {
       });
     });
 
-    it('forwards is_buildtime/is_runtime to createServiceEnvVar', async () => {
-      const spy = jest
-        .spyOn(server['client'], 'createServiceEnvVar')
-        .mockResolvedValue({ uuid: 'env-1' });
+    it('refuses resource=service without reaching the client (zod bypassed)', async () => {
+      const spy = jest.spyOn(server['client'], 'createServiceEnvVar');
 
-      await callEnvVars(server, {
+      const result = (await callEnvVars(server, {
         resource: 'service',
         action: 'create',
         uuid: 'svc-uuid',
         key: 'API_KEY',
         value: 'secret',
-        is_buildtime: true,
-        is_runtime: undefined,
-      });
+      })) as { content: Array<{ text: string }> };
 
-      expect(spy).toHaveBeenCalledWith('svc-uuid', {
-        key: 'API_KEY',
-        value: 'secret',
-        is_buildtime: true,
-        is_runtime: undefined,
-      });
+      expect(spy).not.toHaveBeenCalled();
+      expect(result.content[0].text).toContain('only supports resource=application');
     });
 
     it('returns key/value error when create is missing required fields', async () => {
       const result = (await callEnvVars(server, {
         resource: 'application',
         action: 'create',
-        uuid: 'app-uuid',
-      })) as { content: Array<{ text: string }> };
-      expect(result.content[0].text).toContain('key, value required');
-    });
-
-    it('returns key/value error when service create is missing required fields', async () => {
-      const result = (await callEnvVars(server, {
-        resource: 'service',
-        action: 'create',
-        uuid: 'svc-uuid',
+        uuid: APP_UUID,
       })) as { content: Array<{ text: string }> };
       expect(result.content[0].text).toContain('key, value required');
     });
@@ -393,8 +385,8 @@ describe('CoolifyMcpServer v2', () => {
 
     const baseCreatePublic = {
       action: 'create_public' as const,
-      project_uuid: 'proj-uuid',
-      server_uuid: 'server-uuid',
+      project_uuid: 'ham77e2te16ndrq6h4m2yudn',
+      server_uuid: 'sptooo8egv3zz5cdhumih0g1',
       git_repository: 'https://github.com/org/monorepo',
       git_branch: 'main',
       build_pack: 'dockerfile',
@@ -447,8 +439,8 @@ describe('CoolifyMcpServer v2', () => {
       // endpoint doesn't accept build-config (pre-built image), so handler must drop those.
       await callApplication(server, {
         action: 'create_dockerimage',
-        project_uuid: 'proj-uuid',
-        server_uuid: 'server-uuid',
+        project_uuid: 'ham77e2te16ndrq6h4m2yudn',
+        server_uuid: 'sptooo8egv3zz5cdhumih0g1',
         docker_registry_image_name: 'traefik/whoami',
         ports_exposes: '80',
         // Should be forwarded:
@@ -481,8 +473,8 @@ describe('CoolifyMcpServer v2', () => {
 
       await callApplication(server, {
         action: 'create_dockerfile',
-        project_uuid: 'proj-uuid',
-        server_uuid: 'server-uuid',
+        project_uuid: 'ham77e2te16ndrq6h4m2yudn',
+        server_uuid: 'sptooo8egv3zz5cdhumih0g1',
         dockerfile: 'FROM node:20\nCMD ["node", "index.js"]',
         dockerfile_location: '/Dockerfile',
         ports_exposes: '3000',
@@ -491,8 +483,8 @@ describe('CoolifyMcpServer v2', () => {
 
       expect(spy).toHaveBeenCalledWith(
         expect.objectContaining({
-          project_uuid: 'proj-uuid',
-          server_uuid: 'server-uuid',
+          project_uuid: 'ham77e2te16ndrq6h4m2yudn',
+          server_uuid: 'sptooo8egv3zz5cdhumih0g1',
           dockerfile: 'FROM node:20\nCMD ["node", "index.js"]',
           dockerfile_location: '/Dockerfile',
           ports_exposes: '3000',
@@ -504,10 +496,10 @@ describe('CoolifyMcpServer v2', () => {
     it('returns required-param error when create_dockerfile is missing dockerfile', async () => {
       const result = (await callApplication(server, {
         action: 'create_dockerfile',
-        project_uuid: 'proj-uuid',
-        server_uuid: 'server-uuid',
+        project_uuid: 'ham77e2te16ndrq6h4m2yudn',
+        server_uuid: 'sptooo8egv3zz5cdhumih0g1',
       })) as { content: Array<{ text: string }> };
-      expect(result.content[0].text).toContain('project_uuid, server_uuid, dockerfile required');
+      expect(result.content[0].text).toContain('dockerfile required');
     });
 
     it('forwards dockerfile_target_build through update (PATCH-only)', async () => {
@@ -515,21 +507,15 @@ describe('CoolifyMcpServer v2', () => {
 
       await callApplication(server, {
         action: 'update',
-        uuid: 'app-uuid',
-        dockerfile_location: '/apps/api/Dockerfile',
+        uuid: APP_UUID,
         dockerfile_target_build: 'production',
-        base_directory: '/apps/api',
       });
 
       expect(spy).toHaveBeenCalledWith(
-        'app-uuid',
-        expect.objectContaining({
-          dockerfile_location: '/apps/api/Dockerfile',
-          dockerfile_target_build: 'production',
-          base_directory: '/apps/api',
-        }),
+        APP_UUID,
+        expect.objectContaining({ dockerfile_target_build: 'production' }),
       );
-      // Confirm the update spread strips routing fields.
+      // Confirm the update spread strips routing fields and removed build-source fields.
       const updateData = spy.mock.calls[0]?.[1] as unknown as Record<string, unknown>;
       expect(updateData).not.toHaveProperty('action');
       expect(updateData).not.toHaveProperty('uuid');
@@ -556,7 +542,7 @@ describe('CoolifyMcpServer v2', () => {
       const spy = jest.spyOn(server['client'], 'deleteApplication');
       const tool = getTool(server, 'application');
       expect(tool).toBeDefined();
-      await tool!.handler({ action: 'delete', uuid: 'app-uuid' }, {});
+      await tool!.handler({ action: 'delete', uuid: APP_UUID }, {});
       expect(spy).not.toHaveBeenCalled();
     });
 
@@ -564,7 +550,7 @@ describe('CoolifyMcpServer v2', () => {
       const spy = jest.spyOn(server['client'], 'deleteApplicationPreview');
       const tool = getTool(server, 'application');
       expect(tool).toBeDefined();
-      await tool!.handler({ action: 'delete_preview', uuid: 'app-uuid', pull_request_id: 1 }, {});
+      await tool!.handler({ action: 'delete_preview', uuid: APP_UUID, pull_request_id: 1 }, {});
       expect(spy).not.toHaveBeenCalled();
     });
 
@@ -664,7 +650,7 @@ describe('CoolifyMcpServer v2', () => {
         id: 1,
         uuid: 'dep-uuid',
         deployment_uuid: 'dep-123',
-        application_uuid: 'app-uuid',
+        application_uuid: APP_UUID,
         application_name: 'test-app',
         server_name: 'test-server',
         status: 'finished',
@@ -678,7 +664,7 @@ describe('CoolifyMcpServer v2', () => {
         logs,
         // Raw upstream fields that must never leak through the projection:
         application: {
-          uuid: 'app-uuid',
+          uuid: APP_UUID,
           docker_compose: 'x'.repeat(5000),
           docker_compose_raw: 'x'.repeat(5000),
           custom_labels: 'a'.repeat(2000),
@@ -700,9 +686,13 @@ describe('CoolifyMcpServer v2', () => {
     }
 
     it('returns essential fields + logs only, no leaked secrets or nested graphs', async () => {
-      mockFetch.mockResolvedValueOnce(mockJsonResponse(rawDeploymentWithSecrets(5)));
+      mockFetch.mockResolvedValue(mockJsonResponse(rawDeploymentWithSecrets(5)));
 
-      const result = await callDeployment(server, { action: 'get', uuid: 'dep-uuid', lines: 5 });
+      const result = await callDeployment(server, {
+        action: 'get',
+        uuid: DEPLOYMENT_UUID,
+        lines: 5,
+      });
       const text = result.content[0].text;
 
       expect(text).not.toContain('logdrain');
@@ -716,7 +706,7 @@ describe('CoolifyMcpServer v2', () => {
       const parsed = JSON.parse(text) as { data: Record<string, unknown> };
       expect(parsed.data).toMatchObject({
         uuid: 'dep-uuid',
-        application_uuid: 'app-uuid',
+        application_uuid: APP_UUID,
         application_name: 'test-app',
         server_name: 'test-server',
         status: 'finished',
@@ -728,9 +718,13 @@ describe('CoolifyMcpServer v2', () => {
     });
 
     it('keeps the response under 20KB even with a bloated upstream payload', async () => {
-      mockFetch.mockResolvedValueOnce(mockJsonResponse(rawDeploymentWithSecrets(5)));
+      mockFetch.mockResolvedValue(mockJsonResponse(rawDeploymentWithSecrets(5)));
 
-      const result = await callDeployment(server, { action: 'get', uuid: 'dep-uuid', lines: 5 });
+      const result = await callDeployment(server, {
+        action: 'get',
+        uuid: DEPLOYMENT_UUID,
+        lines: 5,
+      });
       const text = result.content[0].text;
 
       expect(text.length).toBeLessThan(20_000);
@@ -762,7 +756,7 @@ describe('CoolifyMcpServer v2', () => {
     ): Record<string, unknown> => ({
       uuid: 'dep-uuid',
       deployment_uuid: 'dep-uuid',
-      application_uuid: 'app-uuid',
+      application_uuid: APP_UUID,
       application_name: 'my-app',
       status: 'in_progress',
       commit: 'abc123',
@@ -784,11 +778,11 @@ describe('CoolifyMcpServer v2', () => {
         .mockResolvedValue({ deployments: [{ deployment_uuid: 'dep-uuid' }] });
       const pollSpy = jest.spyOn(server['client'], 'getDeployment');
 
-      const result = (await callDeploy(server, { tag_or_uuid: 'my-tag', force: true })) as {
+      const result = (await callDeploy(server, { tag_or_uuid: APP_UUID, force: true })) as {
         content: Array<{ text: string }>;
       };
 
-      expect(spy).toHaveBeenCalledWith('my-tag', true);
+      expect(spy).toHaveBeenCalledWith(APP_UUID, true);
       expect(pollSpy).not.toHaveBeenCalled();
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.data).toEqual({ deployments: [{ deployment_uuid: 'dep-uuid' }] });
@@ -807,7 +801,7 @@ describe('CoolifyMcpServer v2', () => {
         .mockResolvedValueOnce(essentialDeployment({ status: 'in_progress' }) as never)
         .mockResolvedValueOnce(essentialDeployment({ status: 'finished' }) as never);
 
-      const resultPromise = callDeploy(server, { tag_or_uuid: 'my-tag', wait: true }) as Promise<{
+      const resultPromise = callDeploy(server, { tag_or_uuid: APP_UUID, wait: true }) as Promise<{
         content: Array<{ text: string }>;
       }>;
 
@@ -842,7 +836,7 @@ describe('CoolifyMcpServer v2', () => {
           return essentialDeployment({ status: 'failed' }) as never;
         });
 
-      const resultPromise = callDeploy(server, { tag_or_uuid: 'my-tag', wait: true }) as Promise<{
+      const resultPromise = callDeploy(server, { tag_or_uuid: APP_UUID, wait: true }) as Promise<{
         content: Array<{ text: string }>;
       }>;
 
@@ -868,7 +862,7 @@ describe('CoolifyMcpServer v2', () => {
         .mockResolvedValue(essentialDeployment({ status: 'in_progress' }) as never);
 
       const resultPromise = callDeploy(server, {
-        tag_or_uuid: 'my-tag',
+        tag_or_uuid: APP_UUID,
         wait: true,
         timeout_seconds: 10,
       }) as Promise<{ content: Array<{ text: string }> }>;
@@ -897,7 +891,7 @@ describe('CoolifyMcpServer v2', () => {
         }) as never,
       );
 
-      const resultPromise = callDeploy(server, { tag_or_uuid: 'my-tag', wait: true }) as Promise<{
+      const resultPromise = callDeploy(server, { tag_or_uuid: APP_UUID, wait: true }) as Promise<{
         content: Array<{ text: string }>;
       }>;
       const result = await resultPromise;
@@ -1456,48 +1450,48 @@ describe('truncateLogs', () => {
 
 describe('getApplicationActions', () => {
   it('should return view logs action for all apps', () => {
-    const actions = getApplicationActions('app-uuid', 'stopped');
+    const actions = getApplicationActions(APP_UUID, 'stopped');
     expect(actions).toContainEqual({
       tool: 'application_logs',
-      args: { uuid: 'app-uuid' },
+      args: { uuid: APP_UUID },
       hint: 'View logs',
     });
   });
 
   it('should return restart/stop actions for running apps', () => {
-    const actions = getApplicationActions('app-uuid', 'running');
+    const actions = getApplicationActions(APP_UUID, 'running');
     expect(actions).toContainEqual({
       tool: 'control',
-      args: { resource: 'application', action: 'restart', uuid: 'app-uuid' },
+      args: { resource: 'application', action: 'restart', uuid: APP_UUID },
       hint: 'Restart',
     });
     expect(actions).toContainEqual({
       tool: 'control',
-      args: { resource: 'application', action: 'stop', uuid: 'app-uuid' },
+      args: { resource: 'application', action: 'stop', uuid: APP_UUID },
       hint: 'Stop',
     });
   });
 
   it('should return start action for stopped apps', () => {
-    const actions = getApplicationActions('app-uuid', 'stopped');
+    const actions = getApplicationActions(APP_UUID, 'stopped');
     expect(actions).toContainEqual({
       tool: 'control',
-      args: { resource: 'application', action: 'start', uuid: 'app-uuid' },
+      args: { resource: 'application', action: 'start', uuid: APP_UUID },
       hint: 'Start',
     });
   });
 
   it('should handle running:healthy status', () => {
-    const actions = getApplicationActions('app-uuid', 'running:healthy');
+    const actions = getApplicationActions(APP_UUID, 'running:healthy');
     expect(actions.some((a) => a.hint === 'Restart')).toBe(true);
     expect(actions.some((a) => a.hint === 'Stop')).toBe(true);
   });
 
   it('should handle undefined status', () => {
-    const actions = getApplicationActions('app-uuid', undefined);
+    const actions = getApplicationActions(APP_UUID, undefined);
     expect(actions).toContainEqual({
       tool: 'control',
-      args: { resource: 'application', action: 'start', uuid: 'app-uuid' },
+      args: { resource: 'application', action: 'start', uuid: APP_UUID },
       hint: 'Start',
     });
   });
@@ -1505,7 +1499,7 @@ describe('getApplicationActions', () => {
 
 describe('getDeploymentActions', () => {
   it('should return cancel action for in_progress deployments', () => {
-    const actions = getDeploymentActions('dep-uuid', 'in_progress', 'app-uuid');
+    const actions = getDeploymentActions('dep-uuid', 'in_progress', APP_UUID);
     expect(actions).toContainEqual({
       tool: 'deployment',
       args: { action: 'cancel', uuid: 'dep-uuid' },
@@ -1514,7 +1508,7 @@ describe('getDeploymentActions', () => {
   });
 
   it('should return cancel action for queued deployments', () => {
-    const actions = getDeploymentActions('dep-uuid', 'queued', 'app-uuid');
+    const actions = getDeploymentActions('dep-uuid', 'queued', APP_UUID);
     expect(actions).toContainEqual({
       tool: 'deployment',
       args: { action: 'cancel', uuid: 'dep-uuid' },
@@ -1523,21 +1517,21 @@ describe('getDeploymentActions', () => {
   });
 
   it('should return app actions when appUuid provided', () => {
-    const actions = getDeploymentActions('dep-uuid', 'finished', 'app-uuid');
+    const actions = getDeploymentActions('dep-uuid', 'finished', APP_UUID);
     expect(actions).toContainEqual({
       tool: 'get_application',
-      args: { uuid: 'app-uuid' },
+      args: { uuid: APP_UUID },
       hint: 'View app',
     });
     expect(actions).toContainEqual({
       tool: 'application_logs',
-      args: { uuid: 'app-uuid' },
+      args: { uuid: APP_UUID },
       hint: 'App logs',
     });
   });
 
   it('should not return cancel for finished deployments', () => {
-    const actions = getDeploymentActions('dep-uuid', 'finished', 'app-uuid');
+    const actions = getDeploymentActions('dep-uuid', 'finished', APP_UUID);
     expect(actions.some((a) => a.hint === 'Cancel')).toBe(false);
   });
 

@@ -16,6 +16,18 @@ import {
   type ServiceSummary,
 } from './coolify-client.js';
 import { DeployerClient } from './deployer-client.js';
+import { InvalidArgumentError, SAFE_SEGMENT_RE, safeSegment } from './path-safety.js';
+import {
+  APP_UUID_RE,
+  REMOVED_CREATE_ACTIONS,
+  REMOVED_UPDATE_FIELDS,
+  ScopeError,
+  assertAppInScope,
+  assertDeploymentInScope,
+  resolveCreateScope,
+  survivingCreateActions,
+} from './scope.js';
+import { DomainError, validateCreateDomain } from './domain-guard.js';
 import type {
   CoolifyConfig,
   BuildPack,
@@ -31,6 +43,42 @@ export const VERSION: string = _require('../../package.json').version;
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
+/** Id-like tool input: restricted to path-safe characters so it fails before the handler runs. */
+const safeId = (): z.ZodString =>
+  z.string().regex(SAFE_SEGMENT_RE, 'invalid_argument: must match ' + SAFE_SEGMENT_RE.source);
+
+/** Rejected path segments and scope failures are tool errors (isError), never silent successes. */
+function argumentErrorResult(error: unknown): ToolResult | undefined {
+  if (error instanceof InvalidArgumentError || error instanceof ScopeError) {
+    return { content: [{ type: 'text' as const, text: error.message }], isError: true };
+  }
+  return undefined;
+}
+
+/**
+ * Run a scope check before a handler. Returns an `isError` result (text starts with
+ * `out_of_scope`) when the check fails, or undefined when the handler may proceed.
+ * Every gated handler must call this before any write.
+ */
+async function denyUnlessInScope(check: () => Promise<void>): Promise<ToolResult | undefined> {
+  try {
+    await check();
+    return undefined;
+  } catch (error) {
+    return (
+      argumentErrorResult(error) ?? {
+        content: [
+          {
+            type: 'text' as const,
+            text: `out_of_scope: scope check failed (${error instanceof Error ? error.message : String(error)})`,
+          },
+        ],
+        isError: true,
+      }
+    );
+  }
+}
+
 /** Wrap handler with error handling */
 function wrap<T>(
   fn: () => Promise<T>,
@@ -39,14 +87,17 @@ function wrap<T>(
     .then((result) => ({
       content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }],
     }))
-    .catch((error) => ({
-      content: [
-        {
-          type: 'text' as const,
-          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+    .catch(
+      (error) =>
+        argumentErrorResult(error) ?? {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
         },
-      ],
-    }));
+    );
 }
 
 const TRUNCATION_PREFIX = '...[truncated]...\n';
@@ -205,14 +256,17 @@ function wrapWithActions<T>(
       if (pagination) response._pagination = pagination;
       return { content: [{ type: 'text' as const, text: JSON.stringify(response, null, 2) }] };
     })
-    .catch((error) => ({
-      content: [
-        {
-          type: 'text' as const,
-          text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+    .catch(
+      (error) =>
+        argumentErrorResult(error) ?? {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Error: ${error instanceof Error ? error.message : String(error)}`,
+            },
+          ],
         },
-      ],
-    }));
+    );
 }
 
 // =============================================================================
@@ -270,9 +324,12 @@ interface DeployWaitResult {
 export class CoolifyMcpServer extends McpServer {
   private readonly client: CoolifyClient;
   private readonly deployer?: DeployerClient;
+  private readonly removedCreateActions: readonly string[];
 
-  constructor(config: CoolifyConfig) {
+  /** `options.removedCreateActions` exists so tests can prove the enum/handler derive from the list. */
+  constructor(config: CoolifyConfig, options?: { removedCreateActions?: readonly string[] }) {
     super({ name: 'coolify', version: VERSION });
+    this.removedCreateActions = options?.removedCreateActions ?? REMOVED_CREATE_ACTIONS;
     this.client = new CoolifyClient(config);
     this.deployer = config.deployerUrl ? new DeployerClient(config.deployerUrl) : undefined;
     this.registerTools();
@@ -435,7 +492,19 @@ export class CoolifyMcpServer extends McpServer {
       'diagnose_app',
       'App diagnostics by UUID/name/domain',
       { query: z.string() },
-      async ({ query }) => wrap(() => this.client.diagnoseApplication(query)),
+      async ({ query }) => {
+        // Resolve first (name/domain -> uuid), then gate the resolved uuid. A resolution
+        // failure is not a scope decision, so it keeps its normal error.
+        let uuid: string;
+        try {
+          uuid = await this.client.resolveApplicationUuid(query);
+        } catch (error) {
+          return wrap(() => Promise.reject(error));
+        }
+        const denied = await denyUnlessInScope(() => assertAppInScope(this.client, uuid));
+        if (denied) return denied;
+        return wrap(() => this.client.diagnoseApplication(uuid));
+      },
     );
 
     this.tool('find_issues', 'Scan infrastructure for problems', {}, async () =>
@@ -458,10 +527,10 @@ export class CoolifyMcpServer extends McpServer {
     // =========================================================================
     this.tool(
       'projects',
-      'Manage projects: list/get/create/update (delete unavailable — use the Coolify dashboard)',
+      'Manage projects: list/get/create (update and delete unavailable — use the Coolify dashboard)',
       {
-        action: z.enum(['list', 'get', 'create', 'update']),
-        uuid: z.string().optional(),
+        action: z.enum(['list', 'get', 'create']),
+        uuid: safeId().optional(),
         name: z.string().optional(),
         description: z.string().optional(),
         page: z.number().optional(),
@@ -479,10 +548,6 @@ export class CoolifyMcpServer extends McpServer {
             if (!name)
               return { content: [{ type: 'text' as const, text: 'Error: name required' }] };
             return wrap(() => this.client.createProject({ name, description }));
-          case 'update':
-            if (!uuid)
-              return { content: [{ type: 'text' as const, text: 'Error: uuid required' }] };
-            return wrap(() => this.client.updateProject(uuid, { name, description }));
         }
       },
     );
@@ -495,7 +560,7 @@ export class CoolifyMcpServer extends McpServer {
       'Manage environments: list/get/create (delete unavailable — use the Coolify dashboard) (get includes dragonfly/keydb/clickhouse DBs missing from API)',
       {
         action: z.enum(['list', 'get', 'create']),
-        project_uuid: z.string(),
+        project_uuid: safeId(),
         name: z.string().optional(),
         description: z.string().optional(),
       },
@@ -542,12 +607,15 @@ export class CoolifyMcpServer extends McpServer {
     // other apps' hostnames), and `github_app_uuid` / `private_key_uuid` plus the create_github /
     // create_key actions that need them (they would use shared team git credentials).
     const applicationShape = {
-      action: z.enum(['create_public', 'create_dockerimage', 'create_dockerfile', 'update']),
-      uuid: z.string().optional(),
-      // Create fields
+      action: z.enum([
+        ...survivingCreateActions(this.removedCreateActions),
+        'update',
+      ] as unknown as [string, ...string[]]),
+      uuid: safeId().optional(),
+      // Create fields. The four placement fields are optional and, when given, must equal the
+      // scope constants (see resolveCreateScope); `destination_uuid` is intentionally absent.
       project_uuid: z.string().optional(),
       server_uuid: z.string().optional(),
-      destination_uuid: z.string().optional(),
       git_repository: z.string().optional(),
       git_branch: z.string().optional(),
       environment_name: z.string().optional(),
@@ -591,8 +659,18 @@ export class CoolifyMcpServer extends McpServer {
       // (controller $allowedFields line 1014) but accepts on PATCH (line 2497).
       dockerfile_target_build: z.string().optional(),
     };
+    // Update never sends build-source fields (REMOVED_UPDATE_FIELDS) nor create-time placement.
+    const NEVER_UPDATABLE = [
+      'action',
+      'uuid',
+      'project_uuid',
+      'server_uuid',
+      'environment_uuid',
+      'environment_name',
+      ...REMOVED_UPDATE_FIELDS,
+    ];
     const UPDATABLE_APPLICATION_FIELDS = Object.keys(applicationShape).filter(
-      (k) => k !== 'action' && k !== 'uuid',
+      (k) => !NEVER_UPDATABLE.includes(k),
     );
 
     this.tool(
@@ -601,11 +679,68 @@ export class CoolifyMcpServer extends McpServer {
       applicationShape,
       async (args) => {
         const { action, uuid } = args;
+        let placement: ReturnType<typeof resolveCreateScope> | undefined;
+        let validatedDomains: string | undefined;
+        let validatedFqdn: string | undefined;
+        if (action !== 'update') {
+          if (!survivingCreateActions(this.removedCreateActions).includes(action)) {
+            return {
+              content: [{ type: 'text' as const, text: `Error: unsupported action ${action}` }],
+              isError: true,
+            };
+          }
+          try {
+            placement = resolveCreateScope(args);
+          } catch (error) {
+            const denied = argumentErrorResult(error);
+            if (denied) return denied;
+            throw error;
+          }
+          // One application-list fetch per create call, only when a domain was supplied.
+          // Coolify returns the whole list when no page params are sent, so no paging loop.
+          let appsFetched: Promise<string[]> | undefined;
+          const takenHosts = (): Promise<string[]> =>
+            (appsFetched ??= this.client.listApplications().then((apps) => {
+              if (!Array.isArray(apps)) throw new Error('application list unavailable');
+              return (apps as Array<{ fqdn?: string | null }>).flatMap((a) =>
+                (a.fqdn ?? '')
+                  .split(',')
+                  .map((u) => u.trim())
+                  .filter(Boolean)
+                  .map((u) => {
+                    try {
+                      return new URL(u).hostname.toLowerCase();
+                    } catch {
+                      return u.toLowerCase();
+                    }
+                  }),
+              );
+            }));
+          try {
+            validatedDomains = await validateCreateDomain(args.domains, takenHosts);
+            validatedFqdn = await validateCreateDomain(args.fqdn, takenHosts);
+          } catch (error) {
+            if (error instanceof DomainError) {
+              return {
+                content: [{ type: 'text' as const, text: error.message }],
+                isError: true,
+              };
+            }
+            // Fail closed: if existing hosts cannot be read, nothing is created.
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `invalid_domain: could not verify host availability (${error instanceof Error ? error.message : String(error)})`,
+                },
+              ],
+              isError: true,
+            };
+          }
+        }
         switch (action) {
           case 'create_public':
             if (
-              !args.project_uuid ||
-              !args.server_uuid ||
               !args.git_repository ||
               !args.git_branch ||
               !args.build_pack ||
@@ -615,26 +750,25 @@ export class CoolifyMcpServer extends McpServer {
                 content: [
                   {
                     type: 'text' as const,
-                    text: 'Error: project_uuid, server_uuid, git_repository, git_branch, build_pack, ports_exposes required',
+                    text: 'Error: git_repository, git_branch, build_pack, ports_exposes required',
                   },
                 ],
               };
             }
             return wrap(() =>
               this.client.createApplicationPublic({
-                project_uuid: args.project_uuid!,
-                server_uuid: args.server_uuid!,
-                destination_uuid: args.destination_uuid,
+                project_uuid: placement!.project_uuid,
+                server_uuid: placement!.server_uuid,
                 git_repository: args.git_repository!,
                 git_branch: args.git_branch!,
                 build_pack: args.build_pack! as BuildPack,
                 ports_exposes: args.ports_exposes!,
-                environment_name: args.environment_name,
-                environment_uuid: args.environment_uuid,
+                environment_name: placement!.environment_name,
+                environment_uuid: placement!.environment_uuid,
                 name: args.name,
                 description: args.description,
-                fqdn: args.fqdn,
-                domains: args.domains,
+                fqdn: validatedFqdn,
+                domains: validatedDomains,
                 base_directory: args.base_directory,
                 publish_directory: args.publish_directory,
                 install_command: args.install_command,
@@ -658,35 +792,29 @@ export class CoolifyMcpServer extends McpServer {
               }),
             );
           case 'create_dockerimage':
-            if (
-              !args.project_uuid ||
-              !args.server_uuid ||
-              !args.docker_registry_image_name ||
-              !args.ports_exposes
-            ) {
+            if (!args.docker_registry_image_name || !args.ports_exposes) {
               return {
                 content: [
                   {
                     type: 'text' as const,
-                    text: 'Error: project_uuid, server_uuid, docker_registry_image_name, ports_exposes required',
+                    text: 'Error: docker_registry_image_name, ports_exposes required',
                   },
                 ],
               };
             }
             return wrap(() =>
               this.client.createApplicationDockerImage({
-                project_uuid: args.project_uuid!,
-                server_uuid: args.server_uuid!,
-                destination_uuid: args.destination_uuid,
+                project_uuid: placement!.project_uuid,
+                server_uuid: placement!.server_uuid,
                 docker_registry_image_name: args.docker_registry_image_name!,
                 ports_exposes: args.ports_exposes!,
                 docker_registry_image_tag: args.docker_registry_image_tag,
-                environment_name: args.environment_name,
-                environment_uuid: args.environment_uuid,
+                environment_name: placement!.environment_name,
+                environment_uuid: placement!.environment_uuid,
                 name: args.name,
                 description: args.description,
-                fqdn: args.fqdn,
-                domains: args.domains,
+                fqdn: validatedFqdn,
+                domains: validatedDomains,
                 // Build-config fields (base_directory, install_command, etc.)
                 // are intentionally NOT forwarded: /applications/dockerimage is
                 // for pre-built registry images and has no build step.
@@ -706,37 +834,50 @@ export class CoolifyMcpServer extends McpServer {
               }),
             );
           case 'create_dockerfile':
-            if (!args.project_uuid || !args.server_uuid || !args.dockerfile) {
+            if (!args.dockerfile) {
               return {
                 content: [
                   {
                     type: 'text' as const,
-                    text: 'Error: project_uuid, server_uuid, dockerfile required',
+                    text: 'Error: dockerfile required',
                   },
                 ],
               };
             }
             return wrap(() =>
               this.client.createApplicationDockerfile({
-                project_uuid: args.project_uuid!,
-                server_uuid: args.server_uuid!,
-                destination_uuid: args.destination_uuid,
+                project_uuid: placement!.project_uuid,
+                server_uuid: placement!.server_uuid,
                 dockerfile: args.dockerfile!,
                 dockerfile_location: args.dockerfile_location,
                 ports_exposes: args.ports_exposes,
                 base_directory: args.base_directory,
-                environment_name: args.environment_name,
-                environment_uuid: args.environment_uuid,
+                environment_name: placement!.environment_name,
+                environment_uuid: placement!.environment_uuid,
                 name: args.name,
                 description: args.description,
-                fqdn: args.fqdn,
-                domains: args.domains,
+                fqdn: validatedFqdn,
+                domains: validatedDomains,
                 instant_deploy: args.instant_deploy,
               }),
             );
           case 'update': {
             if (!uuid)
               return { content: [{ type: 'text' as const, text: 'Error: uuid required' }] };
+            const presentRemoved = REMOVED_UPDATE_FIELDS.filter(
+              (f) => (args as Record<string, unknown>)[f] !== undefined,
+            );
+            if (presentRemoved.length > 0) {
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: `invalid_argument: cannot update ${presentRemoved.join(', ')}: this connector cannot change build sources or domains; use the Coolify dashboard`,
+                  },
+                ],
+                isError: true,
+              };
+            }
             // Allowlist, not a spread: only schema-declared fields can reach the PATCH body,
             // even if a caller bypasses zod validation.
             const updateData = Object.fromEntries(
@@ -744,8 +885,15 @@ export class CoolifyMcpServer extends McpServer {
                 ([k, v]) => UPDATABLE_APPLICATION_FIELDS.includes(k) && v !== undefined,
               ),
             );
+            const denied = await denyUnlessInScope(() => assertAppInScope(this.client, uuid));
+            if (denied) return denied;
             return wrap(() => this.client.updateApplication(uuid, updateData));
           }
+          default:
+            return {
+              content: [{ type: 'text' as const, text: `Error: unsupported action ${action}` }],
+              isError: true,
+            };
         }
       },
     );
@@ -912,8 +1060,12 @@ export class CoolifyMcpServer extends McpServer {
     this.tool(
       'application_logs',
       'Get app logs',
-      { uuid: z.string(), lines: z.number().optional() },
-      async ({ uuid, lines }) => wrap(() => this.client.getApplicationLogs(uuid, lines)),
+      { uuid: safeId(), lines: z.number().optional() },
+      async ({ uuid, lines }) => {
+        const denied = await denyUnlessInScope(() => assertAppInScope(this.client, uuid));
+        if (denied) return denied;
+        return wrap(() => this.client.getApplicationLogs(uuid, lines));
+      },
     );
 
     // =========================================================================
@@ -925,7 +1077,7 @@ export class CoolifyMcpServer extends McpServer {
       {
         resource: z.enum(['application']),
         action: z.enum(['start', 'stop', 'restart']),
-        uuid: z.string(),
+        uuid: safeId(),
       },
       async ({ resource, action, uuid }) => {
         // Defence in depth: the schema already restricts this, but a caller that bypasses
@@ -940,6 +1092,8 @@ export class CoolifyMcpServer extends McpServer {
             ],
           };
         }
+        const denied = await denyUnlessInScope(() => assertAppInScope(this.client, uuid));
+        if (denied) return denied;
         const methods: Record<string, (u: string) => Promise<unknown>> = {
           start: (u) => this.client.startApplication(u),
           stop: (u) => this.client.stopApplication(u),
@@ -968,17 +1122,16 @@ export class CoolifyMcpServer extends McpServer {
     // =========================================================================
     this.tool(
       'env_vars',
-      "Manage env vars for app, service, or database. Values are masked by default (returned as '***') to avoid leaking secrets to MCP clients; pass reveal=true on the list action when the caller explicitly needs the plaintext (e.g. 'what is FOO set to?'). Set is_buildtime=false (and/or is_runtime=true) for runtime-only vars to avoid Dockerfile ARG issues with multiline values like PEM keys.",
+      "Manage env vars for an application. Values are always masked (returned as '***') to avoid leaking secrets to MCP clients. Set is_buildtime=false (and/or is_runtime=true) for runtime-only vars to avoid Dockerfile ARG issues with multiline values like PEM keys.",
       {
-        resource: z.enum(['application', 'service', 'database']),
+        resource: z.enum(['application']),
         action: z.enum(['list', 'create', 'update', 'delete', 'bulk_update']),
-        uuid: z.string(),
+        uuid: safeId(),
         key: z.string().optional(),
         value: z.string().optional(),
-        env_uuid: z.string().optional(),
+        env_uuid: safeId().optional(),
         is_buildtime: z.boolean().optional(),
         is_runtime: z.boolean().optional(),
-        reveal: z.boolean().optional(),
         data: z
           .array(
             z.object({
@@ -994,105 +1147,56 @@ export class CoolifyMcpServer extends McpServer {
           )
           .optional(),
       },
-      async ({
-        resource,
-        action,
-        uuid,
-        key,
-        value,
-        env_uuid,
-        is_buildtime,
-        is_runtime,
-        reveal,
-        data,
-      }) => {
-        if (resource === 'application') {
-          switch (action) {
-            case 'list':
-              return wrap(() =>
-                this.client.listApplicationEnvVars(uuid, { summary: true, reveal }),
-              );
-            case 'create':
-              if (!key || !value)
-                return { content: [{ type: 'text' as const, text: 'Error: key, value required' }] };
-              return wrap(() =>
-                this.client.createApplicationEnvVar(uuid, {
-                  key,
-                  value,
-                  is_buildtime,
-                  is_runtime,
-                }),
-              );
-            case 'update':
-              if (!key || !value)
-                return { content: [{ type: 'text' as const, text: 'Error: key, value required' }] };
-              return wrap(() =>
-                this.client.updateApplicationEnvVar(uuid, {
-                  key,
-                  value,
-                  is_buildtime,
-                  is_runtime,
-                }),
-              );
-            case 'delete':
-              if (!env_uuid)
-                return { content: [{ type: 'text' as const, text: 'Error: env_uuid required' }] };
-              return wrap(() => this.client.deleteApplicationEnvVar(uuid, env_uuid));
-            case 'bulk_update':
-              if (!data)
-                return { content: [{ type: 'text' as const, text: 'Error: data array required' }] };
-              return wrap(() => this.client.bulkUpdateApplicationEnvVars(uuid, { data }));
-          }
-        } else if (resource === 'service') {
-          switch (action) {
-            case 'list':
-              return wrap(() => this.client.listServiceEnvVars(uuid, { reveal }));
-            case 'create':
-              if (!key || !value)
-                return { content: [{ type: 'text' as const, text: 'Error: key, value required' }] };
-              return wrap(() =>
-                this.client.createServiceEnvVar(uuid, { key, value, is_buildtime, is_runtime }),
-              );
-            case 'update':
-              if (!key || !value)
-                return { content: [{ type: 'text' as const, text: 'Error: key, value required' }] };
-              return wrap(() =>
-                this.client.updateServiceEnvVar(uuid, { key, value, is_buildtime, is_runtime }),
-              );
-            case 'delete':
-              if (!env_uuid)
-                return { content: [{ type: 'text' as const, text: 'Error: env_uuid required' }] };
-              return wrap(() => this.client.deleteServiceEnvVar(uuid, env_uuid));
-            case 'bulk_update':
-              if (!data)
-                return { content: [{ type: 'text' as const, text: 'Error: data array required' }] };
-              return wrap(() => this.client.bulkUpdateServiceEnvVars(uuid, { data }));
-          }
-        } else {
-          switch (action) {
-            case 'list':
-              return wrap(() => this.client.listDatabaseEnvVars(uuid));
-            case 'create':
-              if (!key || !value)
-                return { content: [{ type: 'text' as const, text: 'Error: key, value required' }] };
-              return wrap(() =>
-                this.client.createDatabaseEnvVar(uuid, { key, value, is_buildtime, is_runtime }),
-              );
-            case 'update':
-              if (!key || !value)
-                return { content: [{ type: 'text' as const, text: 'Error: key, value required' }] };
-              return wrap(() =>
-                this.client.updateDatabaseEnvVar(uuid, { key, value, is_buildtime, is_runtime }),
-              );
-            case 'delete':
-              if (!env_uuid)
-                return { content: [{ type: 'text' as const, text: 'Error: env_uuid required' }] };
-              return wrap(() => this.client.deleteDatabaseEnvVar(uuid, env_uuid));
-            case 'bulk_update':
-              if (!data)
-                return { content: [{ type: 'text' as const, text: 'Error: data array required' }] };
-              return wrap(() => this.client.bulkUpdateDatabaseEnvVars(uuid, { data }));
-          }
+      async ({ resource, action, uuid, key, value, env_uuid, is_buildtime, is_runtime, data }) => {
+        // Defence in depth: the schema already restricts this, but a caller that bypasses
+        // validation must still not reach service/database env vars.
+        if (resource !== 'application') {
+          return {
+            content: [
+              { type: 'text' as const, text: 'Error: env_vars only supports resource=application' },
+            ],
+          };
+        }
+        // Validate every path-bound id before the scope lookup so a bad one costs zero requests.
+        const denied = await denyUnlessInScope(async () => {
+          if (env_uuid !== undefined) safeSegment(env_uuid, 'env_uuid');
+          await assertAppInScope(this.client, uuid);
+        });
+        if (denied) return denied;
+        switch (action) {
+          case 'list':
+            // No reveal option: plaintext values never leave through this connector.
+            return wrap(() => this.client.listApplicationEnvVars(uuid, { summary: true }));
+          case 'create':
+            if (!key || !value)
+              return { content: [{ type: 'text' as const, text: 'Error: key, value required' }] };
+            return wrap(() =>
+              this.client.createApplicationEnvVar(uuid, {
+                key,
+                value,
+                is_buildtime,
+                is_runtime,
+              }),
+            );
+          case 'update':
+            if (!key || !value)
+              return { content: [{ type: 'text' as const, text: 'Error: key, value required' }] };
+            return wrap(() =>
+              this.client.updateApplicationEnvVar(uuid, {
+                key,
+                value,
+                is_buildtime,
+                is_runtime,
+              }),
+            );
+          case 'delete':
+            if (!env_uuid)
+              return { content: [{ type: 'text' as const, text: 'Error: env_uuid required' }] };
+            return wrap(() => this.client.deleteApplicationEnvVar(uuid, env_uuid));
+          case 'bulk_update':
+            if (!data)
+              return { content: [{ type: 'text' as const, text: 'Error: data array required' }] };
+            return wrap(() => this.client.bulkUpdateApplicationEnvVars(uuid, { data }));
         }
       },
     );
@@ -1115,9 +1219,11 @@ export class CoolifyMcpServer extends McpServer {
 
     this.tool(
       'deploy',
-      'Deploy by tag/UUID',
+      'Deploy an application by UUID',
       {
-        tag_or_uuid: z.string(),
+        tag_or_uuid: z
+          .string()
+          .regex(APP_UUID_RE, 'invalid_argument: must be a 24-char lowercase uuid'),
         force: z.boolean().optional(),
         wait: z
           .boolean()
@@ -1133,6 +1239,8 @@ export class CoolifyMcpServer extends McpServer {
           ),
       },
       async ({ tag_or_uuid, force, wait, timeout_seconds }) => {
+        const denied = await denyUnlessInScope(() => assertAppInScope(this.client, tag_or_uuid));
+        if (denied) return denied;
         if (!wait) {
           return wrapWithActions(
             () => this.client.deployByTagOrUuid(tag_or_uuid, force),
@@ -1159,13 +1267,19 @@ export class CoolifyMcpServer extends McpServer {
       'Manage deployment: get/cancel/list_for_app. Logs excluded by default on all actions — for get use `lines` (paginated tail), for list_for_app use `include_logs: true` to include raw build-log blobs.',
       {
         action: z.enum(['get', 'cancel', 'list_for_app']),
-        uuid: z.string(),
+        uuid: safeId(),
         lines: z.number().optional(), // Include logs truncated to last N entries (omit for no logs)
         page: z.number().optional(), // Log page (1=most recent, 2=older, etc.)
         max_chars: z.number().optional(), // Limit log output to last N chars (default: 50000)
         include_logs: z.boolean().optional(), // list_for_app only: include raw build logs (default false; upstream returns ~30KB per deployment)
       },
       async ({ action, uuid, lines, page, max_chars, include_logs }) => {
+        const denied = await denyUnlessInScope(() =>
+          action === 'list_for_app'
+            ? assertAppInScope(this.client, uuid)
+            : assertDeploymentInScope(this.client, uuid),
+        );
+        if (denied) return denied;
         switch (action) {
           case 'get':
             // If lines param specified, include logs and truncate

@@ -10,8 +10,11 @@ import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CoolifyMcpServer } from '../lib/mcp-server.js';
+import { REMOVED_CREATE_ACTIONS, survivingCreateActions } from '../lib/scope.js';
 
 const FORBIDDEN = 'custom_docker_run_options';
+// Scope gate needs a 24-char lowercase uuid and an environment-14 app (default mock response).
+const APP_UUID = 'a'.repeat(24);
 
 const EXPECTED_TOOLS = [
   'application',
@@ -50,7 +53,11 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
 
   beforeEach(async () => {
     mockFetch.mockReset();
-    mockFetch.mockImplementation(async () => jsonResponse({ uuid: 'app-uuid' }));
+    mockFetch.mockImplementation(async (url) =>
+      String(url).endsWith('/applications')
+        ? jsonResponse([])
+        : jsonResponse({ uuid: APP_UUID, environment_id: 14 }),
+    );
     global.fetch = mockFetch;
     // deployerUrl is set so the `artifact` tool registers and the 16-tool count is exact.
     server = new CoolifyMcpServer({
@@ -96,13 +103,11 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     expect(JSON.stringify(tools)).not.toContain(FORBIDDEN);
   });
 
-  const createCases: Array<[string, Record<string, unknown>]> = [
+  const allCreateCases: Array<[string, Record<string, unknown>]> = [
     [
       'create_public',
       {
         action: 'create_public',
-        project_uuid: 'p',
-        server_uuid: 's',
         git_repository: 'https://github.com/o/r',
         git_branch: 'main',
         build_pack: 'nixpacks',
@@ -113,8 +118,6 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
       'create_dockerimage',
       {
         action: 'create_dockerimage',
-        project_uuid: 'p',
-        server_uuid: 's',
         docker_registry_image_name: 'traefik/whoami',
         ports_exposes: '80',
       },
@@ -123,28 +126,36 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
       'create_dockerfile',
       {
         action: 'create_dockerfile',
-        project_uuid: 'p',
-        server_uuid: 's',
         dockerfile: 'FROM scratch',
       },
     ],
   ];
 
-  it.each(createCases)(
-    '%s never puts custom_docker_run_options in the request body',
-    async (_name, base) => {
-      await callApplication({ ...base, [FORBIDDEN]: '--privileged' });
-      const bodies = writeBodies();
-      expect(bodies).toHaveLength(1);
-      expect(bodies[0]).not.toContain(FORBIDDEN);
-      expect(bodies[0]).not.toContain('--privileged');
-    },
+  // Derived from the live removed list so removing an action never breaks these tables.
+  const createCases = allCreateCases.filter(([n]) =>
+    survivingCreateActions(REMOVED_CREATE_ACTIONS).includes(n),
   );
+  // Jest throws on an empty it.each table.
+  const eachCreate = (
+    name: string,
+    fn: (n: string, b: Record<string, unknown>) => Promise<void>,
+  ): void => {
+    if (createCases.length === 0) return;
+    it.each(createCases)(name, fn);
+  };
+
+  eachCreate('%s never puts custom_docker_run_options in the request body', async (_name, base) => {
+    await callApplication({ ...base, [FORBIDDEN]: '--privileged' });
+    const bodies = writeBodies();
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).not.toContain(FORBIDDEN);
+    expect(bodies[0]).not.toContain('--privileged');
+  });
 
   it('update never puts custom_docker_run_options in the PATCH body', async () => {
     await callApplication({
       action: 'update',
-      uuid: 'app-uuid',
+      uuid: APP_UUID,
       name: 'renamed',
       [FORBIDDEN]: '--privileged --cap-add=SYS_ADMIN --device=/dev/sda',
     });
@@ -156,7 +167,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
   it('update drops other unknown/undeclared keys sent by a client (zod strips them)', async () => {
     await callApplication({
       action: 'update',
-      uuid: 'app-uuid',
+      uuid: APP_UUID,
       name: 'renamed',
       ports_mappings: '22:22',
       docker_compose_raw: 'x',
@@ -186,7 +197,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     await tool.handler(
       {
         action: 'update',
-        uuid: 'app-uuid',
+        uuid: APP_UUID,
         name: 'renamed',
         [FORBIDDEN]: '--privileged',
         ports_mappings: '22:22',
@@ -202,9 +213,8 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
   it('update still forwards declared fields (no regression)', async () => {
     await callApplication({
       action: 'update',
-      uuid: 'app-uuid',
+      uuid: APP_UUID,
       name: 'n',
-      domains: 'https://a.tools.orca-internal.net',
       health_check_enabled: true,
       health_check_port: 3000,
       dockerfile_target_build: 'worker',
@@ -213,7 +223,6 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     const bodies = writeBodies();
     expect(JSON.parse(bodies[0])).toEqual({
       name: 'n',
-      domains: 'https://a.tools.orca-internal.net',
       health_check_enabled: true,
       health_check_port: 3000,
       dockerfile_target_build: 'worker',
@@ -248,7 +257,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     const app = tools.find((t) => t.name === 'application')!;
     const action = (app.inputSchema as unknown as { properties: { action: { enum: string[] } } })
       .properties.action.enum;
-    expect(action).toEqual(['create_public', 'create_dockerimage', 'create_dockerfile', 'update']);
+    expect(action).toEqual([...survivingCreateActions(REMOVED_CREATE_ACTIONS), 'update']);
   });
 
   it.each(['create_github', 'create_key'])(
@@ -268,7 +277,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     },
   );
 
-  it.each(createCases)(
+  eachCreate(
     '%s never puts custom_labels, github_app_uuid or private_key_uuid in the body',
     async (_name, base) => {
       await callApplication({ ...base, ...REMOVED_VALUES });
@@ -284,7 +293,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
   it('update never puts custom_labels, github_app_uuid or private_key_uuid in the PATCH body', async () => {
     await callApplication({
       action: 'update',
-      uuid: 'app-uuid',
+      uuid: APP_UUID,
       name: 'renamed',
       ...REMOVED_VALUES,
     });
@@ -300,7 +309,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
         >;
       }
     )._registeredTools['application'];
-    await tool.handler({ action: 'update', uuid: 'app-uuid', name: 'x', ...REMOVED_VALUES }, {});
+    await tool.handler({ action: 'update', uuid: APP_UUID, name: 'x', ...REMOVED_VALUES }, {});
     expect(JSON.parse(writeBodies()[0])).toEqual({ name: 'x' });
   });
 
@@ -344,11 +353,11 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     );
 
     it.each([
-      ['start', '/applications/app-uuid/start'],
-      ['stop', '/applications/app-uuid/stop'],
-      ['restart', '/applications/app-uuid/restart'],
+      ['start', `/applications/${APP_UUID}/start`],
+      ['stop', `/applications/${APP_UUID}/stop`],
+      ['restart', `/applications/${APP_UUID}/restart`],
     ])('application %s still works', async (action, path) => {
-      const result = await callControl({ resource: 'application', action, uuid: 'app-uuid' });
+      const result = await callControl({ resource: 'application', action, uuid: APP_UUID });
       expect(result.isError).toBeFalsy();
       const urls = mockFetch.mock.calls.map(([u]) => String(u));
       expect(urls.some((u) => u.endsWith(path))).toBe(true);
@@ -359,8 +368,6 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     it('create_public with domains, health checks and build config', async () => {
       await callApplication({
         action: 'create_public',
-        project_uuid: 'p',
-        server_uuid: 's',
         git_repository: 'https://github.com/o/r',
         git_branch: 'main',
         build_pack: 'nixpacks',
@@ -382,8 +389,6 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     it('create_dockerfile with domains', async () => {
       await callApplication({
         action: 'create_dockerfile',
-        project_uuid: 'p',
-        server_uuid: 's',
         dockerfile: 'FROM nginx',
         ports_exposes: '80',
         domains: 'https://site.tools.orca-internal.net',
@@ -396,15 +401,14 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
       });
     });
 
-    it('update with domains', async () => {
-      await callApplication({
+    it('update with domains is refused (Task 7), no request', async () => {
+      const r = await callApplication({
         action: 'update',
-        uuid: 'app-uuid',
+        uuid: APP_UUID,
         domains: 'https://app.tools.orca-internal.net',
       });
-      expect(JSON.parse(writeBodies()[0])).toEqual({
-        domains: 'https://app.tools.orca-internal.net',
-      });
+      expect((r as { isError?: boolean }).isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('env_vars create on an application', async () => {
@@ -413,7 +417,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
         arguments: {
           resource: 'application',
           action: 'create',
-          uuid: 'app-uuid',
+          uuid: APP_UUID,
           key: 'FOO',
           value: 'bar',
         },
