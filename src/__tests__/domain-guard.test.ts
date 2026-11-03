@@ -197,6 +197,14 @@ describe('domain-guard through the protocol', () => {
       expect(writes()).toHaveLength(0);
     });
 
+    it.each(REJECTS)('protocol: rejects %s with zero writes', async (raw, env) => {
+      if (env) process.env.RESERVED_LABELS = env;
+      const r = await call({ action, ...createArgs[action], domains: raw });
+      expect(r.isError).toBe(true);
+      expect(text(r)).toMatch(/^invalid_domain:/);
+      expect(writes()).toHaveLength(0);
+    });
+
     it('a host used by an existing app is refused, zero writes', async () => {
       const r = await call({ action, ...createArgs[action], domains: TAKEN });
       expect(r.isError).toBe(true);

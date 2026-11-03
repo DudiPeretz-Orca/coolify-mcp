@@ -124,29 +124,65 @@ export function normaliseClientRoute(raw) {
 }
 
 /**
- * Replace each `${...}` interpolation (brace-balanced, so `${this.buildQueryString({ a })}` and
- * `${safeSegment(x, 'label')}` are single units) with `/{param}` when it directly follows a `/`,
- * or drop it otherwise (query-string builders glued onto the previous segment).
+ * Index just past the end of the `${ ... }` expression whose body starts at `start`
+ * (the character after `${`), or -1 if it never closes. Understands string literals and nested
+ * template literals, so braces inside them do not count.
+ */
+function endOfInterpolation(text, start) {
+  let depth = 1;
+  let j = start;
+  while (j < text.length) {
+    const c = text[j];
+    if (c === "'" || c === '"') {
+      j++;
+      while (j < text.length && text[j] !== c) j += text[j] === '\\' ? 2 : 1;
+      if (j >= text.length) return -1;
+      j++;
+    } else if (c === '`') {
+      j++;
+      for (;;) {
+        if (j >= text.length) return -1;
+        if (text[j] === '\\') j += 2;
+        else if (text[j] === '`') break;
+        else if (text[j] === '$' && text[j + 1] === '{') {
+          const e = endOfInterpolation(text, j + 2);
+          if (e === -1) return -1;
+          j = e;
+        } else j++;
+      }
+      j++;
+    } else {
+      if (c === '{') depth++;
+      else if (c === '}' && --depth === 0) return j + 1;
+      j++;
+    }
+  }
+  return -1;
+}
+
+/**
+ * Replace each `${...}` interpolation with `/{param}` when it directly follows a `/`, or drop it
+ * otherwise (query-string builders glued onto the previous segment). Fails closed: an
+ * interpolation the scanner cannot close is left in the text verbatim, so the route cannot match
+ * a spec path and is reported as drift.
  */
 function replaceInterpolations(text) {
   let out = '';
   let i = 0;
   while (i < text.length) {
-    const startsInterp = text[i] === '$' && text[i + 1] === '{';
     const slashInterp = text[i] === '/' && text[i + 1] === '$' && text[i + 2] === '{';
-    if (!startsInterp && !slashInterp) {
+    const startsInterp = text[i] === '$' && text[i + 1] === '{';
+    if (!slashInterp && !startsInterp) {
       out += text[i++];
       continue;
     }
-    let j = i + (slashInterp ? 3 : 2);
-    let depth = 1;
-    while (j < text.length && depth > 0) {
-      if (text[j] === '{') depth++;
-      else if (text[j] === '}') depth--;
-      j++;
+    const end = endOfInterpolation(text, i + (slashInterp ? 3 : 2));
+    if (end === -1) {
+      out += text.slice(i);
+      break;
     }
     out += slashInterp ? '/{param}' : '';
-    i = j;
+    i = end;
   }
   return out;
 }
