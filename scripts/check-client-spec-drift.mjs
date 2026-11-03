@@ -119,10 +119,36 @@ export function extractClientRoutes(clientText) {
 export function normaliseClientRoute(raw) {
   const qIdx = raw.indexOf('?');
   const withoutQuery = qIdx === -1 ? raw : raw.slice(0, qIdx);
-  const withoutInterpolations = withoutQuery.replace(/(\/?)\$\{[^}]*\}/g, (_, slash) =>
-    slash ? '/{param}' : '',
-  );
+  const withoutInterpolations = replaceInterpolations(withoutQuery);
   return segmentsOf(withoutInterpolations);
+}
+
+/**
+ * Replace each `${...}` interpolation (brace-balanced, so `${this.buildQueryString({ a })}` and
+ * `${safeSegment(x, 'label')}` are single units) with `/{param}` when it directly follows a `/`,
+ * or drop it otherwise (query-string builders glued onto the previous segment).
+ */
+function replaceInterpolations(text) {
+  let out = '';
+  let i = 0;
+  while (i < text.length) {
+    const startsInterp = text[i] === '$' && text[i + 1] === '{';
+    const slashInterp = text[i] === '/' && text[i + 1] === '$' && text[i + 2] === '{';
+    if (!startsInterp && !slashInterp) {
+      out += text[i++];
+      continue;
+    }
+    let j = i + (slashInterp ? 3 : 2);
+    let depth = 1;
+    while (j < text.length && depth > 0) {
+      if (text[j] === '{') depth++;
+      else if (text[j] === '}') depth--;
+      j++;
+    }
+    out += slashInterp ? '/{param}' : '';
+    i = j;
+  }
+  return out;
 }
 
 /** Turn a spec path key into a list of segments, using `null` for `{param}` segments. */

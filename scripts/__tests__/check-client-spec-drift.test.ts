@@ -96,6 +96,36 @@ describe('normaliseClientRoute', () => {
   });
 });
 
+describe('normaliseClientRoute with safeSegment and object-literal query builders', () => {
+  it('treats ${safeSegment(x, label)} like a plain ${x} path parameter', () => {
+    expect(normaliseClientRoute("/applications/${safeSegment(uuid, 'uuid')}/logs")).toEqual(
+      normaliseClientRoute('/applications/${uuid}/logs'),
+    );
+  });
+
+  it('drops a query builder whose argument contains braces', () => {
+    expect(
+      normaliseClientRoute(
+        "/applications/${safeSegment(uuid, 'uuid')}/logs${this.buildQueryString({ lines })}",
+      ),
+    ).toEqual(['applications', null, 'logs']);
+    expect(
+      normaliseClientRoute('/deploy${this.buildQueryString({ [param]: tagOrUuid, force })}'),
+    ).toEqual(['deploy']);
+  });
+
+  it('still fails a genuinely mismatching safeSegment-wrapped route', () => {
+    const spec = ['paths:', '  /applications/{uuid}/logs:', '    get: {}', 'components:'].join(
+      '\n',
+    );
+    const client =
+      "this.request(`/applications/${safeSegment(uuid, 'uuid')}/nope${this.buildQueryString({ a })}`)";
+    expect(findUnmatchedRoutes(client, spec)).toContain(
+      "/applications/${safeSegment(uuid, 'uuid')}/nope${this.buildQueryString({ a })}",
+    );
+  });
+});
+
 describe('normaliseSpecPath', () => {
   it('turns {param} segments into wildcards', () => {
     expect(normaliseSpecPath('/applications/{uuid}/envs/{env_uuid}')).toEqual([
