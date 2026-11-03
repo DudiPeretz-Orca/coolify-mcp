@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MCP (Model Context Protocol) server for Coolify that provides 42 token-optimized tools for AI assistants to manage infrastructure through natural language. Tools cover servers, projects, environments, applications, databases, services, deployments, private keys, teams, cloud tokens, documentation search, smart diagnostics, and batch operations. v2.0.0 reduced token usage by 85% (from ~43,000 to ~6,600 tokens) by consolidating related operations into single tools with action parameters.
+MCP (Model Context Protocol) server for Coolify that provides 16 token-optimized tools in this Orca fork (upstream has 42; the fork removed the rest at the source): `get_version`, `get_infrastructure_overview`, `diagnose_app`, `find_issues`, `list_servers`, `projects`, `environments`, `list_applications`, `application`, `application_logs`, `control`, `env_vars`, `list_deployments`, `deploy`, `deployment`, `artifact`. v2.0.0 reduced token usage by 85% (from ~43,000 to ~6,600 tokens) by consolidating related operations into single tools with action parameters.
 
 ## Commands
 
@@ -18,6 +18,17 @@ npm run format       # Run Prettier
 # Run locally
 COOLIFY_BASE_URL="https://your-coolify.com" COOLIFY_ACCESS_TOKEN="token" node dist/index.js
 ```
+
+## Orca fork maintainer rules (do not weaken; keep on rebase)
+
+When rebasing on upstream `stumason/coolify-mcp`, re-check every item; upstream changes will not respect them.
+
+- **Scope gate** (`src/lib/scope.ts`): any tool that acts on an existing application must pass `assertAppInScope` / `assertDeploymentInScope` (via `denyUnlessInScope` in `mcp-server.ts`) before any write. Scope constants are hard-coded; never read them from env or caller input.
+- **`safeSegment` everywhere** (`src/lib/path-safety.ts`): every URL path value in `coolify-client.ts` must be interpolated as `${safeSegment(value, 'label')}`. No new tool may interpolate an unvalidated value into a path. Query values go through `buildQueryString`.
+- **Create and update**: `create_*` take placement only from `resolveCreateScope`. `REMOVED_UPDATE_FIELDS` stay out of the update allowlist and are refused with `invalid_argument:`. Domains go through `validateCreateDomain`.
+- **Removed surface**: no `reveal`, tag deploys, `projects update`, service/database env vars, `destination_uuid` or `custom_*` docker/label fields. `tools/list` must stay exactly 16 (tests assert it).
+- **Error prefixes are a contract**: `out_of_scope:`, `invalid_argument:`, `invalid_domain:`. Argument/placement refusals and removed update fields happen before any request; `out_of_scope` gate refusals happen after the scope lookup only; `invalid_domain` may follow one application-list fetch; `diagnose_app` lists applications to resolve a name before gating.
+- Run focused tests with `NODE_OPTIONS=--experimental-vm-modules npx jest --testPathPatterns <name>` (`npm test -- <name>` does not filter). Run `npm run check:spec-drift` after touching client routes.
 
 ## Architecture
 
@@ -145,6 +156,6 @@ When making changes to the codebase, ensure documentation is updated:
    - New example prompts needed
    - Response size improvements made (update comparison table)
 
-3. **This file (CLAUDE.md)** - Update tool count if changed (currently 42 tools)
+3. **This file (CLAUDE.md)** - Update tool count if changed (currently 16 tools)
 
 Always work on a feature branch and include documentation updates in the same PR as code changes.
