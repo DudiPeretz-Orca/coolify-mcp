@@ -53,7 +53,11 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
 
   beforeEach(async () => {
     mockFetch.mockReset();
-    mockFetch.mockImplementation(async () => jsonResponse({ uuid: APP_UUID, environment_id: 14 }));
+    mockFetch.mockImplementation(async (url) =>
+      String(url).endsWith('/applications')
+        ? jsonResponse([])
+        : jsonResponse({ uuid: APP_UUID, environment_id: 14 }),
+    );
     global.fetch = mockFetch;
     // deployerUrl is set so the `artifact` tool registers and the 16-tool count is exact.
     server = new CoolifyMcpServer({
@@ -211,7 +215,6 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
       action: 'update',
       uuid: APP_UUID,
       name: 'n',
-      domains: 'https://a.tools.orca-internal.net',
       health_check_enabled: true,
       health_check_port: 3000,
       dockerfile_target_build: 'worker',
@@ -220,7 +223,6 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     const bodies = writeBodies();
     expect(JSON.parse(bodies[0])).toEqual({
       name: 'n',
-      domains: 'https://a.tools.orca-internal.net',
       health_check_enabled: true,
       health_check_port: 3000,
       dockerfile_target_build: 'worker',
@@ -399,15 +401,14 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
       });
     });
 
-    it('update with domains', async () => {
-      await callApplication({
+    it('update with domains is refused (Task 7), no request', async () => {
+      const r = await callApplication({
         action: 'update',
         uuid: APP_UUID,
         domains: 'https://app.tools.orca-internal.net',
       });
-      expect(JSON.parse(writeBodies()[0])).toEqual({
-        domains: 'https://app.tools.orca-internal.net',
-      });
+      expect((r as { isError?: boolean }).isError).toBe(true);
+      expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('env_vars create on an application', async () => {

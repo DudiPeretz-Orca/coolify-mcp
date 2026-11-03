@@ -83,7 +83,7 @@ describe('Task 6: update loses build-source fields; create_* locked to scope', (
   const text = (r: unknown): string => (r as { content: Array<{ text: string }> }).content[0].text;
 
   describe('REMOVED_UPDATE_FIELDS', () => {
-    it('lists exactly the 11 build-source fields', () => {
+    it('lists exactly the build-source fields plus domains and fqdn', () => {
       expect([...REMOVED_UPDATE_FIELDS].sort()).toEqual(
         [
           'base_directory',
@@ -93,6 +93,8 @@ describe('Task 6: update loses build-source fields; create_* locked to scope', (
           'docker_registry_image_tag',
           'dockerfile',
           'dockerfile_location',
+          'domains',
+          'fqdn',
           'git_branch',
           'git_repository',
           'install_command',

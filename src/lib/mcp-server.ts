@@ -27,6 +27,7 @@ import {
   resolveCreateScope,
   survivingCreateActions,
 } from './scope.js';
+import { DomainError, validateCreateDomain } from './domain-guard.js';
 import type {
   CoolifyConfig,
   BuildPack,
@@ -679,6 +680,8 @@ export class CoolifyMcpServer extends McpServer {
       async (args) => {
         const { action, uuid } = args;
         let placement: ReturnType<typeof resolveCreateScope> | undefined;
+        let validatedDomains: string | undefined;
+        let validatedFqdn: string | undefined;
         if (action !== 'update') {
           if (!survivingCreateActions(this.removedCreateActions).includes(action)) {
             return {
@@ -692,6 +695,47 @@ export class CoolifyMcpServer extends McpServer {
             const denied = argumentErrorResult(error);
             if (denied) return denied;
             throw error;
+          }
+          // One application-list fetch per create call, only when a domain was supplied.
+          // Coolify returns the whole list when no page params are sent, so no paging loop.
+          let appsFetched: Promise<string[]> | undefined;
+          const takenHosts = (): Promise<string[]> =>
+            (appsFetched ??= this.client.listApplications().then((apps) => {
+              if (!Array.isArray(apps)) throw new Error('application list unavailable');
+              return (apps as Array<{ fqdn?: string | null }>).flatMap((a) =>
+                (a.fqdn ?? '')
+                  .split(',')
+                  .map((u) => u.trim())
+                  .filter(Boolean)
+                  .map((u) => {
+                    try {
+                      return new URL(u).hostname.toLowerCase();
+                    } catch {
+                      return u.toLowerCase();
+                    }
+                  }),
+              );
+            }));
+          try {
+            validatedDomains = await validateCreateDomain(args.domains, takenHosts);
+            validatedFqdn = await validateCreateDomain(args.fqdn, takenHosts);
+          } catch (error) {
+            if (error instanceof DomainError) {
+              return {
+                content: [{ type: 'text' as const, text: error.message }],
+                isError: true,
+              };
+            }
+            // Fail closed: if existing hosts cannot be read, nothing is created.
+            return {
+              content: [
+                {
+                  type: 'text' as const,
+                  text: `invalid_domain: could not verify host availability (${error instanceof Error ? error.message : String(error)})`,
+                },
+              ],
+              isError: true,
+            };
           }
         }
         switch (action) {
@@ -723,8 +767,8 @@ export class CoolifyMcpServer extends McpServer {
                 environment_uuid: placement!.environment_uuid,
                 name: args.name,
                 description: args.description,
-                fqdn: args.fqdn,
-                domains: args.domains,
+                fqdn: validatedFqdn,
+                domains: validatedDomains,
                 base_directory: args.base_directory,
                 publish_directory: args.publish_directory,
                 install_command: args.install_command,
@@ -769,8 +813,8 @@ export class CoolifyMcpServer extends McpServer {
                 environment_uuid: placement!.environment_uuid,
                 name: args.name,
                 description: args.description,
-                fqdn: args.fqdn,
-                domains: args.domains,
+                fqdn: validatedFqdn,
+                domains: validatedDomains,
                 // Build-config fields (base_directory, install_command, etc.)
                 // are intentionally NOT forwarded: /applications/dockerimage is
                 // for pre-built registry images and has no build step.
@@ -812,8 +856,8 @@ export class CoolifyMcpServer extends McpServer {
                 environment_uuid: placement!.environment_uuid,
                 name: args.name,
                 description: args.description,
-                fqdn: args.fqdn,
-                domains: args.domains,
+                fqdn: validatedFqdn,
+                domains: validatedDomains,
                 instant_deploy: args.instant_deploy,
               }),
             );
@@ -828,7 +872,7 @@ export class CoolifyMcpServer extends McpServer {
                 content: [
                   {
                     type: 'text' as const,
-                    text: `invalid_argument: cannot update ${presentRemoved.join(', ')}: this connector cannot change build sources; use the Coolify dashboard`,
+                    text: `invalid_argument: cannot update ${presentRemoved.join(', ')}: this connector cannot change build sources or domains; use the Coolify dashboard`,
                   },
                 ],
                 isError: true,

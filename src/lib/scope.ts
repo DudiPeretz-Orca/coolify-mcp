@@ -71,8 +71,9 @@ export const SCOPE_ENVIRONMENT_NAME = 'production';
 export const SCOPE_SERVER_UUID = 'sptooo8egv3zz5cdhumih0g1';
 
 /**
- * Build-source fields the connector's `update` may never send: changing any of them re-points
- * an existing in-scope app at attacker-chosen code. They stay settable at create time only.
+ * Fields the connector's `update` may never send: build-source fields re-point an existing
+ * in-scope app at attacker-chosen code, and domains/fqdn re-point hostnames. They stay
+ * settable at create time only (domains validated by domain-guard).
  */
 export const REMOVED_UPDATE_FIELDS: readonly string[] = [
   'dockerfile',
@@ -86,6 +87,10 @@ export const REMOVED_UPDATE_FIELDS: readonly string[] = [
   'dockerfile_location',
   'docker_registry_image_name',
   'docker_registry_image_tag',
+  // Domains are create-time only and validated there (domain-guard.ts); an update could
+  // re-point another app's hostname.
+  'domains',
+  'fqdn',
 ];
 
 /**
