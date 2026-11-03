@@ -106,3 +106,22 @@ export function assertEnvValueAllowed(value: unknown, isMultiline: unknown, fiel
     }
   }
 }
+
+/** Flags the connector always sends: literal (no interpolation), runtime-only. */
+export const FORCED_ENV_FLAGS = {
+  is_literal: true,
+  is_buildtime: false,
+  is_runtime: true,
+} as const;
+
+/** Refuses any caller-supplied flag that differs from the forced value; omitted flags pass. */
+export function assertEnvFlagsAllowed(flags: Record<string, unknown>, prefix = ''): void {
+  for (const [name, forced] of Object.entries(FORCED_ENV_FLAGS)) {
+    const given = flags?.[name];
+    if (given !== undefined && given !== forced) {
+      throw new EnvKeyError(
+        `invalid_argument: ${prefix}${name} must be ${forced} or omitted; the connector only writes literal, runtime-only variables (use the Coolify dashboard for build-time or interpolated variables)`,
+      );
+    }
+  }
+}

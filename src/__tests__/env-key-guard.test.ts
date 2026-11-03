@@ -233,6 +233,86 @@ describe('env_vars key denylist', () => {
     });
   });
 
+  describe('literal, runtime-only flags', () => {
+    const bodies = (): Array<Record<string, unknown>> =>
+      mockFetch.mock.calls
+        .filter(([, init]) => (init?.method ?? 'GET') !== 'GET')
+        .map(([, init]) => JSON.parse(String(init?.body)));
+    const FORCED = { is_literal: true, is_buildtime: false, is_runtime: true };
+    const entryOf = (b: Record<string, unknown>): Record<string, unknown> =>
+      Array.isArray(b.data) ? (b.data[0] as Record<string, unknown>) : b;
+    const mk: Array<[string, (f: Record<string, unknown>) => Record<string, unknown>]> = [
+      ['create', (f) => ({ action: 'create', key: 'K', value: 'v', ...f })],
+      ['update', (f) => ({ action: 'update', key: 'K', value: 'v', ...f })],
+      ['bulk_update', (f) => ({ action: 'bulk_update', data: [{ key: 'K', value: 'v', ...f }] })],
+    ];
+    describe.each(mk)('%s', (_n, build) => {
+      it.each([
+        ['no flags', {}],
+        ['same values', FORCED],
+      ])('sends forced flags (%s)', async (_c, flags) => {
+        expect((await call(build(flags))).isError).toBeFalsy();
+        const b = bodies();
+        expect(b).toHaveLength(1);
+        expect(entryOf(b[0])).toMatchObject(FORCED);
+      });
+      it.each([
+        ['is_literal false', { is_literal: false }],
+        ['is_buildtime true', { is_buildtime: true }],
+        ['is_runtime false', { is_runtime: false }],
+      ])('refuses %s with zero requests', async (_c, flags) => {
+        const r = await call(build(flags));
+        refused(r);
+        expect(r.content[0].text).toContain(Object.keys(flags)[0]);
+        expect(r.content[0].text).toContain('Coolify dashboard');
+      });
+      it('refuses bad flags via a zod-bypassed handler call', async () => {
+        const tool = (
+          server as unknown as {
+            _registeredTools: Record<
+              string,
+              { handler: (a: Record<string, unknown>, extra: unknown) => Promise<ToolRes> }
+            >;
+          }
+        )._registeredTools['env_vars'];
+        refused(
+          await tool.handler(
+            { resource: 'application', uuid: APP, ...build({ is_literal: 'no' }) },
+            {},
+          ),
+        );
+      });
+    });
+
+    it('bulk_update with one bad entry is refused as a whole; good entries all forced', async () => {
+      refused(
+        await call({
+          action: 'bulk_update',
+          data: [
+            { key: 'A', value: '1' },
+            { key: 'B', value: '2', is_buildtime: true },
+          ],
+        }),
+      );
+      mockFetch.mockClear();
+      await call({
+        action: 'bulk_update',
+        data: [
+          { key: 'A', value: '1' },
+          { key: 'B', value: '2', is_runtime: true },
+        ],
+      });
+      const data = bodies()[0].data as Array<Record<string, unknown>>;
+      expect(data).toHaveLength(2);
+      for (const e of data) expect(e).toMatchObject(FORCED);
+    });
+
+    it('delete and list are unaffected by the flag rules', async () => {
+      expect((await call({ action: 'list' })).isError).toBeFalsy();
+      expect((await call({ action: 'delete', env_uuid: 'e1' })).isError).toBeFalsy();
+    });
+  });
+
   it('bulk_update with one denied key among allowed ones is refused as a whole', async () => {
     refused(
       await call({

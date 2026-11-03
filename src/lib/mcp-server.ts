@@ -16,7 +16,13 @@ import {
   type ServiceSummary,
 } from './coolify-client.js';
 import { DeployerClient } from './deployer-client.js';
-import { EnvKeyError, assertEnvKeyAllowed, assertEnvValueAllowed } from './env-key-guard.js';
+import {
+  EnvKeyError,
+  FORCED_ENV_FLAGS,
+  assertEnvFlagsAllowed,
+  assertEnvKeyAllowed,
+  assertEnvValueAllowed,
+} from './env-key-guard.js';
 import { InvalidArgumentError, SAFE_SEGMENT_RE, safeSegment } from './path-safety.js';
 import {
   APP_UUID_RE,
@@ -1127,7 +1133,7 @@ export class CoolifyMcpServer extends McpServer {
     // =========================================================================
     this.tool(
       'env_vars',
-      "Manage env vars for an application. Values are always masked (returned as '***') to avoid leaking secrets to MCP clients. Set is_buildtime=false (and/or is_runtime=true) for runtime-only vars to avoid Dockerfile ARG issues with multiline values like PEM keys.",
+      "Manage env vars for an application. Writes (create, update, bulk_update) are always literal and runtime-only; use the Coolify dashboard for build-time or interpolated variables. Values are always masked (returned as '***') to avoid leaking secrets to MCP clients. Multiline values such as PEM keys need is_multiline=true.",
       {
         resource: z.enum(['application']),
         action: z.enum(['list', 'create', 'update', 'delete', 'bulk_update']),
@@ -1142,6 +1148,7 @@ export class CoolifyMcpServer extends McpServer {
         env_uuid: safeId().optional(),
         is_buildtime: z.boolean().optional(),
         is_runtime: z.boolean().optional(),
+        is_literal: z.boolean().optional(),
         is_multiline: z.boolean().optional(),
         data: z
           .array(
@@ -1167,6 +1174,7 @@ export class CoolifyMcpServer extends McpServer {
         env_uuid,
         is_buildtime,
         is_runtime,
+        is_literal,
         is_multiline,
         data,
       }) => {
@@ -1187,6 +1195,7 @@ export class CoolifyMcpServer extends McpServer {
           if (action === 'create' || action === 'update') {
             if (key !== undefined) assertEnvKeyAllowed(key);
             if (value !== undefined) assertEnvValueAllowed(value, is_multiline, 'value');
+            assertEnvFlagsAllowed({ is_literal, is_buildtime, is_runtime });
           }
           if (action === 'bulk_update' && data !== undefined) {
             if (!Array.isArray(data)) assertEnvKeyAllowed(undefined);
@@ -1194,6 +1203,7 @@ export class CoolifyMcpServer extends McpServer {
               data.forEach((entry, i) => {
                 assertEnvKeyAllowed(entry?.key);
                 assertEnvValueAllowed(entry.value, entry.is_multiline, `data[${i}].value`);
+                assertEnvFlagsAllowed(entry, `data[${i}].`);
               });
             }
           }
@@ -1211,9 +1221,8 @@ export class CoolifyMcpServer extends McpServer {
               this.client.createApplicationEnvVar(uuid, {
                 key,
                 value,
-                is_buildtime,
-                is_runtime,
                 is_multiline,
+                ...FORCED_ENV_FLAGS,
               }),
             );
           case 'update':
@@ -1223,9 +1232,8 @@ export class CoolifyMcpServer extends McpServer {
               this.client.updateApplicationEnvVar(uuid, {
                 key,
                 value,
-                is_buildtime,
-                is_runtime,
                 is_multiline,
+                ...FORCED_ENV_FLAGS,
               }),
             );
           case 'delete':
@@ -1235,7 +1243,11 @@ export class CoolifyMcpServer extends McpServer {
           case 'bulk_update':
             if (!data)
               return { content: [{ type: 'text' as const, text: 'Error: data array required' }] };
-            return wrap(() => this.client.bulkUpdateApplicationEnvVars(uuid, { data }));
+            return wrap(() =>
+              this.client.bulkUpdateApplicationEnvVars(uuid, {
+                data: data.map((entry) => ({ ...entry, ...FORCED_ENV_FLAGS })),
+              }),
+            );
         }
       },
     );
