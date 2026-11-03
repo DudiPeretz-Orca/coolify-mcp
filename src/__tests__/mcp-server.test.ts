@@ -312,6 +312,7 @@ describe('CoolifyMcpServer v2', () => {
         value: '-----BEGIN-----',
         is_buildtime: false,
         is_runtime: true,
+        is_literal: true,
       });
     });
 
@@ -335,6 +336,7 @@ describe('CoolifyMcpServer v2', () => {
         value: 'production',
         is_buildtime: false,
         is_runtime: true,
+        is_literal: true,
       });
     });
 

@@ -2020,6 +2020,7 @@ describe('CoolifyClient', () => {
         value: 'production',
         is_buildtime: false,
         is_runtime: true,
+        is_literal: true,
       });
     });
 
@@ -4055,56 +4056,24 @@ describe('CoolifyClient', () => {
         expect(mockFetch).not.toHaveBeenCalled();
       });
 
-      it('should send buildtime flag when specified', async () => {
+      it('always sends literal, runtime-only flags', async () => {
         mockFetch
           .mockResolvedValueOnce(mockResponse(mockApps))
           .mockResolvedValueOnce(mockResponse({ message: 'Updated' }));
 
-        await client.bulkEnvUpdate(['app-1'], 'BUILD_VAR', 'value', true);
-
-        // Verify the PATCH call was made with is_buildtime (one word — Coolify API field name)
-        expect(mockFetch).toHaveBeenCalledWith(
-          'http://localhost:3000/api/v1/applications/app-1/envs',
-          expect.objectContaining({
-            method: 'PATCH',
-            body: JSON.stringify({ key: 'BUILD_VAR', value: 'value', is_buildtime: true }),
-          }),
-        );
-      });
-
-      it('should send both buildtime and runtime flags for runtime-only vars', async () => {
-        mockFetch
-          .mockResolvedValueOnce(mockResponse(mockApps))
-          .mockResolvedValueOnce(mockResponse({ message: 'Updated' }));
-
-        await client.bulkEnvUpdate(['app-1'], 'PEM_KEY', 'multiline-value', false, true);
+        await client.bulkEnvUpdate(['app-1'], 'API_KEY', 'val');
 
         expect(mockFetch).toHaveBeenCalledWith(
           'http://localhost:3000/api/v1/applications/app-1/envs',
           expect.objectContaining({
             method: 'PATCH',
             body: JSON.stringify({
-              key: 'PEM_KEY',
-              value: 'multiline-value',
+              key: 'API_KEY',
+              value: 'val',
+              is_literal: true,
               is_buildtime: false,
               is_runtime: true,
             }),
-          }),
-        );
-      });
-
-      it('should send only is_runtime when buildtime is left undefined', async () => {
-        mockFetch
-          .mockResolvedValueOnce(mockResponse(mockApps))
-          .mockResolvedValueOnce(mockResponse({ message: 'Updated' }));
-
-        await client.bulkEnvUpdate(['app-1'], 'API_KEY', 'val', undefined, false);
-
-        expect(mockFetch).toHaveBeenCalledWith(
-          'http://localhost:3000/api/v1/applications/app-1/envs',
-          expect.objectContaining({
-            method: 'PATCH',
-            body: JSON.stringify({ key: 'API_KEY', value: 'val', is_runtime: false }),
           }),
         );
       });

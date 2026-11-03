@@ -16,6 +16,14 @@ import {
   type ServiceSummary,
 } from './coolify-client.js';
 import { DeployerClient } from './deployer-client.js';
+import {
+  EnvKeyError,
+  FORCED_ENV_FLAGS,
+  assertBuildPackAllowed,
+  assertEnvFlagsAllowed,
+  assertEnvKeyAllowed,
+  assertEnvValueAllowed,
+} from './env-key-guard.js';
 import { InvalidArgumentError, SAFE_SEGMENT_RE, safeSegment } from './path-safety.js';
 import {
   APP_UUID_RE,
@@ -49,7 +57,11 @@ const safeId = (): z.ZodString =>
 
 /** Rejected path segments and scope failures are tool errors (isError), never silent successes. */
 function argumentErrorResult(error: unknown): ToolResult | undefined {
-  if (error instanceof InvalidArgumentError || error instanceof ScopeError) {
+  if (
+    error instanceof InvalidArgumentError ||
+    error instanceof EnvKeyError ||
+    error instanceof ScopeError
+  ) {
     return { content: [{ type: 'text' as const, text: error.message }], isError: true };
   }
   return undefined;
@@ -620,7 +632,10 @@ export class CoolifyMcpServer extends McpServer {
       git_branch: z.string().optional(),
       environment_name: z.string().optional(),
       environment_uuid: z.string().optional(),
-      build_pack: z.string().optional(),
+      build_pack: z
+        .string()
+        .optional()
+        .describe('create_public only: one of nixpacks, static, dockerfile.'),
       ports_exposes: z.string().optional(),
       // Docker image fields
       docker_registry_image_name: z.string().optional(),
@@ -695,6 +710,15 @@ export class CoolifyMcpServer extends McpServer {
             const denied = argumentErrorResult(error);
             if (denied) return denied;
             throw error;
+          }
+          if (action === 'create_public' && args.build_pack !== undefined) {
+            try {
+              assertBuildPackAllowed(args.build_pack);
+            } catch (error) {
+              const denied = argumentErrorResult(error);
+              if (denied) return denied;
+              throw error;
+            }
           }
           // One application-list fetch per create call, only when a domain was supplied.
           // Coolify returns the whole list when no page params are sent, so no paging loop.
@@ -1122,16 +1146,23 @@ export class CoolifyMcpServer extends McpServer {
     // =========================================================================
     this.tool(
       'env_vars',
-      "Manage env vars for an application. Values are always masked (returned as '***') to avoid leaking secrets to MCP clients. Set is_buildtime=false (and/or is_runtime=true) for runtime-only vars to avoid Dockerfile ARG issues with multiline values like PEM keys.",
+      "Manage env vars for an application. Writes (create, update, bulk_update) are always literal and runtime-only; use the Coolify dashboard for build-time or interpolated variables. Values are always masked (returned as '***') to avoid leaking secrets to MCP clients. Multiline values such as PEM keys need is_multiline=true.",
       {
         resource: z.enum(['application']),
         action: z.enum(['list', 'create', 'update', 'delete', 'bulk_update']),
         uuid: safeId(),
-        key: z.string().optional(),
+        key: z
+          .string()
+          .optional()
+          .describe(
+            'Env var name. Names that control build, start or loader behavior are refused (invalid_argument); set those in the Coolify dashboard.',
+          ),
         value: z.string().optional(),
         env_uuid: safeId().optional(),
         is_buildtime: z.boolean().optional(),
         is_runtime: z.boolean().optional(),
+        is_literal: z.boolean().optional(),
+        is_multiline: z.boolean().optional(),
         data: z
           .array(
             z.object({
@@ -1147,7 +1178,19 @@ export class CoolifyMcpServer extends McpServer {
           )
           .optional(),
       },
-      async ({ resource, action, uuid, key, value, env_uuid, is_buildtime, is_runtime, data }) => {
+      async ({
+        resource,
+        action,
+        uuid,
+        key,
+        value,
+        env_uuid,
+        is_buildtime,
+        is_runtime,
+        is_literal,
+        is_multiline,
+        data,
+      }) => {
         // Defence in depth: the schema already restricts this, but a caller that bypasses
         // validation must still not reach service/database env vars.
         if (resource !== 'application') {
@@ -1157,9 +1200,28 @@ export class CoolifyMcpServer extends McpServer {
             ],
           };
         }
-        // Validate every path-bound id before the scope lookup so a bad one costs zero requests.
+        // Validate every path-bound id, then the env keys, before the scope lookup so a bad
+        // one costs zero requests. delete and list are never key-checked.
         const denied = await denyUnlessInScope(async () => {
           if (env_uuid !== undefined) safeSegment(env_uuid, 'env_uuid');
+          // An absent key keeps the handler's own "key, value required" error.
+          if (action === 'create' || action === 'update') {
+            if (key !== undefined) assertEnvKeyAllowed(key);
+            if (value !== undefined) assertEnvValueAllowed(value, is_multiline, 'value');
+          }
+          if (action === 'create' || action === 'update' || action === 'bulk_update') {
+            assertEnvFlagsAllowed({ is_literal, is_buildtime, is_runtime });
+          }
+          if (action === 'bulk_update' && data !== undefined) {
+            if (!Array.isArray(data)) assertEnvKeyAllowed(undefined);
+            else {
+              data.forEach((entry, i) => {
+                assertEnvKeyAllowed(entry?.key);
+                assertEnvValueAllowed(entry.value, entry.is_multiline, `data[${i}].value`);
+                assertEnvFlagsAllowed(entry, `data[${i}].`);
+              });
+            }
+          }
           await assertAppInScope(this.client, uuid);
         });
         if (denied) return denied;
@@ -1174,8 +1236,8 @@ export class CoolifyMcpServer extends McpServer {
               this.client.createApplicationEnvVar(uuid, {
                 key,
                 value,
-                is_buildtime,
-                is_runtime,
+                is_multiline,
+                ...FORCED_ENV_FLAGS,
               }),
             );
           case 'update':
@@ -1185,8 +1247,8 @@ export class CoolifyMcpServer extends McpServer {
               this.client.updateApplicationEnvVar(uuid, {
                 key,
                 value,
-                is_buildtime,
-                is_runtime,
+                is_multiline,
+                ...FORCED_ENV_FLAGS,
               }),
             );
           case 'delete':
@@ -1196,7 +1258,11 @@ export class CoolifyMcpServer extends McpServer {
           case 'bulk_update':
             if (!data)
               return { content: [{ type: 'text' as const, text: 'Error: data array required' }] };
-            return wrap(() => this.client.bulkUpdateApplicationEnvVars(uuid, { data }));
+            return wrap(() =>
+              this.client.bulkUpdateApplicationEnvVars(uuid, {
+                data: data.map((entry) => ({ ...entry, ...FORCED_ENV_FLAGS })),
+              }),
+            );
         }
       },
     );
