@@ -10,6 +10,7 @@ import { jest, describe, it, expect, beforeEach, afterEach } from '@jest/globals
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { CoolifyMcpServer } from '../lib/mcp-server.js';
+import { REMOVED_CREATE_ACTIONS, survivingCreateActions } from '../lib/scope.js';
 
 const FORBIDDEN = 'custom_docker_run_options';
 // Scope gate needs a 24-char lowercase uuid and an environment-14 app (default mock response).
@@ -98,7 +99,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     expect(JSON.stringify(tools)).not.toContain(FORBIDDEN);
   });
 
-  const createCases: Array<[string, Record<string, unknown>]> = [
+  const allCreateCases: Array<[string, Record<string, unknown>]> = [
     [
       'create_public',
       {
@@ -126,16 +127,26 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     ],
   ];
 
-  it.each(createCases)(
-    '%s never puts custom_docker_run_options in the request body',
-    async (_name, base) => {
-      await callApplication({ ...base, [FORBIDDEN]: '--privileged' });
-      const bodies = writeBodies();
-      expect(bodies).toHaveLength(1);
-      expect(bodies[0]).not.toContain(FORBIDDEN);
-      expect(bodies[0]).not.toContain('--privileged');
-    },
+  // Derived from the live removed list so removing an action never breaks these tables.
+  const createCases = allCreateCases.filter(([n]) =>
+    survivingCreateActions(REMOVED_CREATE_ACTIONS).includes(n),
   );
+  // Jest throws on an empty it.each table.
+  const eachCreate = (
+    name: string,
+    fn: (n: string, b: Record<string, unknown>) => Promise<void>,
+  ): void => {
+    if (createCases.length === 0) return;
+    it.each(createCases)(name, fn);
+  };
+
+  eachCreate('%s never puts custom_docker_run_options in the request body', async (_name, base) => {
+    await callApplication({ ...base, [FORBIDDEN]: '--privileged' });
+    const bodies = writeBodies();
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).not.toContain(FORBIDDEN);
+    expect(bodies[0]).not.toContain('--privileged');
+  });
 
   it('update never puts custom_docker_run_options in the PATCH body', async () => {
     await callApplication({
@@ -244,7 +255,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     const app = tools.find((t) => t.name === 'application')!;
     const action = (app.inputSchema as unknown as { properties: { action: { enum: string[] } } })
       .properties.action.enum;
-    expect(action).toEqual(['create_public', 'create_dockerimage', 'create_dockerfile', 'update']);
+    expect(action).toEqual([...survivingCreateActions(REMOVED_CREATE_ACTIONS), 'update']);
   });
 
   it.each(['create_github', 'create_key'])(
@@ -264,7 +275,7 @@ describe('application tool: custom_docker_run_options is removed (Orca fork hard
     },
   );
 
-  it.each(createCases)(
+  eachCreate(
     '%s never puts custom_labels, github_app_uuid or private_key_uuid in the body',
     async (_name, base) => {
       await callApplication({ ...base, ...REMOVED_VALUES });

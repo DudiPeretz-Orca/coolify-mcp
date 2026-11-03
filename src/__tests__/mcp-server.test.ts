@@ -502,15 +502,13 @@ describe('CoolifyMcpServer v2', () => {
       expect(result.content[0].text).toContain('dockerfile required');
     });
 
-    it('forwards dockerfile_target_build through update (PATCH-only), minus build-source fields', async () => {
+    it('forwards dockerfile_target_build through update (PATCH-only)', async () => {
       const spy = jest.spyOn(server['client'], 'updateApplication').mockResolvedValue({} as never);
 
       await callApplication(server, {
         action: 'update',
         uuid: APP_UUID,
-        dockerfile_location: '/apps/api/Dockerfile',
         dockerfile_target_build: 'production',
-        base_directory: '/apps/api',
       });
 
       expect(spy).toHaveBeenCalledWith(
@@ -519,8 +517,6 @@ describe('CoolifyMcpServer v2', () => {
       );
       // Confirm the update spread strips routing fields and removed build-source fields.
       const updateData = spy.mock.calls[0]?.[1] as unknown as Record<string, unknown>;
-      expect(updateData).not.toHaveProperty('dockerfile_location');
-      expect(updateData).not.toHaveProperty('base_directory');
       expect(updateData).not.toHaveProperty('action');
       expect(updateData).not.toHaveProperty('uuid');
     });

@@ -820,6 +820,20 @@ export class CoolifyMcpServer extends McpServer {
           case 'update': {
             if (!uuid)
               return { content: [{ type: 'text' as const, text: 'Error: uuid required' }] };
+            const presentRemoved = REMOVED_UPDATE_FIELDS.filter(
+              (f) => (args as Record<string, unknown>)[f] !== undefined,
+            );
+            if (presentRemoved.length > 0) {
+              return {
+                content: [
+                  {
+                    type: 'text' as const,
+                    text: `invalid_argument: cannot update ${presentRemoved.join(', ')}: this connector cannot change build sources; use the Coolify dashboard`,
+                  },
+                ],
+                isError: true,
+              };
+            }
             // Allowlist, not a spread: only schema-declared fields can reach the PATCH body,
             // even if a caller bypasses zod validation.
             const updateData = Object.fromEntries(

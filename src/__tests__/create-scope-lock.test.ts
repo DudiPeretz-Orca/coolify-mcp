@@ -101,24 +101,61 @@ describe('Task 6: update loses build-source fields; create_* locked to scope', (
       );
     });
 
+    const expectRefused = (r: unknown, fields: string[]): void => {
+      const res = r as { isError?: boolean; content: Array<{ text: string }> };
+      expect(res.isError).toBe(true);
+      expect(res.content[0].text).toMatch(/^invalid_argument:/);
+      for (const f of fields) expect(res.content[0].text).toContain(f);
+      expect(res.content[0].text).toContain('Coolify dashboard');
+      expect(mockFetch).not.toHaveBeenCalled();
+    };
+
     it.each([...REMOVED_UPDATE_FIELDS])(
-      'update with %s sends a PATCH body without it',
+      'update with only %s is refused with zero requests',
       async (field) => {
-        await call({ action: 'update', uuid: APP_UUID, name: 'keep', [field]: 'EVIL-VALUE' });
-        const bodies = writeBodies();
-        expect(bodies).toHaveLength(1);
-        expect(bodies[0]).toEqual({ name: 'keep' });
-        expect(JSON.stringify(bodies[0])).not.toContain('EVIL-VALUE');
+        const r = await call({ action: 'update', uuid: APP_UUID, [field]: 'EVIL-VALUE' });
+        expect(r.isError).toBe(true);
+        expect((r.content as Array<{ text: string }>)[0].text).toMatch(/^invalid_argument:/);
+        expect(mockFetch).not.toHaveBeenCalled();
       },
     );
 
     it.each([...REMOVED_UPDATE_FIELDS])(
-      'zod-bypassed handler update with %s sends a body without it',
+      '%s alongside allowed fields is refused with zero requests (zod-bypassed)',
       async (field) => {
-        await direct(server, { action: 'update', uuid: APP_UUID, name: 'keep', [field]: 'EVIL' });
-        expect(writeBodies()).toEqual([{ name: 'keep' }]);
+        expectRefused(
+          await direct(server, { action: 'update', uuid: APP_UUID, name: 'keep', [field]: 'EVIL' }),
+          [field],
+        );
       },
     );
+
+    it.each([...REMOVED_UPDATE_FIELDS])('%s with null or empty value is refused', async (field) => {
+      expectRefused(await direct(server, { action: 'update', uuid: APP_UUID, [field]: null }), [
+        field,
+      ]);
+      expectRefused(await direct(server, { action: 'update', uuid: APP_UUID, [field]: '' }), [
+        field,
+      ]);
+    });
+
+    it('names every offending field', async () => {
+      expectRefused(
+        await direct(server, {
+          action: 'update',
+          uuid: APP_UUID,
+          git_branch: 'dev',
+          dockerfile: 'FROM x',
+          name: 'n',
+        }),
+        ['git_branch', 'dockerfile'],
+      );
+    });
+
+    it('update with only allowed fields still PATCHes exactly those fields', async () => {
+      await call({ action: 'update', uuid: APP_UUID, name: 'keep', description: 'd' });
+      expect(writeBodies()).toEqual([{ name: 'keep', description: 'd' }]);
+    });
 
     it('update never forwards placement fields either', async () => {
       await direct(server, {
@@ -136,14 +173,23 @@ describe('Task 6: update loses build-source fields; create_* locked to scope', (
   });
 
   describe('REMOVED_CREATE_ACTIONS', () => {
-    it('is empty today and the enum keeps all four actions', async () => {
-      expect(REMOVED_CREATE_ACTIONS).toEqual([]);
+    it('the enum equals survivingCreateActions(REMOVED_CREATE_ACTIONS) + update', async () => {
       const { tools } = await client.listTools();
       const app = tools.find((t) => t.name === 'application')!;
       const en = (app.inputSchema as unknown as { properties: { action: { enum: string[] } } })
         .properties.action.enum;
-      expect(en).toEqual(['create_public', 'create_dockerimage', 'create_dockerfile', 'update']);
+      expect(en).toEqual([...survivingCreateActions(REMOVED_CREATE_ACTIONS), 'update']);
     });
+
+    it.each(REMOVED_CREATE_ACTIONS.length ? [...REMOVED_CREATE_ACTIONS] : ['(none removed)'])(
+      'removed action %s is refused with zero requests',
+      async (a) => {
+        if (REMOVED_CREATE_ACTIONS.length === 0) return;
+        const r = await call({ action: a });
+        expect(r.isError).toBe(true);
+        expect(mockFetch).not.toHaveBeenCalled();
+      },
+    );
 
     it('survivingCreateActions derives from the list', () => {
       expect(survivingCreateActions([])).toEqual([
@@ -157,42 +203,43 @@ describe('Task 6: update loses build-source fields; create_* locked to scope', (
       ]);
     });
 
-    it('REMOVED_CREATE_ACTIONS override removes the action from enum, handler and tools/list', async () => {
-      const { s, c } = await connect(['create_dockerfile']);
+    it.each([
+      [['create_dockerfile']],
+      [['create_public', 'create_dockerimage']],
+      [['create_public', 'create_dockerimage', 'create_dockerfile']],
+    ])('override %j removes exactly those actions everywhere', async (removed) => {
+      const { s, c } = await connect(removed);
       const { tools } = await c.listTools();
       expect(tools).toHaveLength(16);
       const app = tools.find((t) => t.name === 'application')!;
       const en = (app.inputSchema as unknown as { properties: { action: { enum: string[] } } })
         .properties.action.enum;
-      expect(en).toEqual(['create_public', 'create_dockerimage', 'update']);
+      expect(en).toEqual([...survivingCreateActions(removed), 'update']);
 
       mockFetch.mockClear();
-      const viaProtocol = await c.callTool({
-        name: 'application',
-        arguments: { action: 'create_dockerfile', dockerfile: 'FROM scratch' },
-      });
-      expect(viaProtocol.isError).toBe(true);
-      const bypass = (await direct(s, {
-        action: 'create_dockerfile',
-        dockerfile: 'FROM scratch',
-      })) as { isError?: boolean };
-      expect(bypass.isError).toBe(true);
+      for (const a of removed) {
+        const viaProtocol = await c.callTool({
+          name: 'application',
+          arguments: { action: a, dockerfile: 'FROM scratch' },
+        });
+        expect(viaProtocol.isError).toBe(true);
+        const bypass = (await direct(s, { action: a, dockerfile: 'FROM scratch' })) as {
+          isError?: boolean;
+        };
+        expect(bypass.isError).toBe(true);
+      }
       expect(mockFetch).not.toHaveBeenCalled();
 
-      // The other creates still work.
-      await c.callTool({
-        name: 'application',
-        arguments: {
-          action: 'create_dockerimage',
-          docker_registry_image_name: 'a/b',
-          ports_exposes: '80',
-        },
-      });
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      for (const a of survivingCreateActions(removed)) {
+        const base = allCreateBases.find(([n]) => n === a)![1];
+        const r = (await direct(s, base)) as { isError?: boolean };
+        expect(r.isError).toBeFalsy();
+      }
+      expect(mockFetch).toHaveBeenCalledTimes(survivingCreateActions(removed).length);
     });
   });
 
-  const createBases: Array<[string, Record<string, unknown>, string]> = [
+  const allCreateBases: Array<[string, Record<string, unknown>, string]> = [
     [
       'create_public',
       {
@@ -223,7 +270,19 @@ describe('Task 6: update loses build-source fields; create_* locked to scope', (
     ['server_uuid', SCOPE_SERVER_UUID],
   ];
 
-  describe.each(createBases)('%s scope lock', (_name, base, path) => {
+  // Derived from the live removed list; an empty table would make Jest throw.
+  const createBases = allCreateBases.filter(([n]) =>
+    survivingCreateActions(REMOVED_CREATE_ACTIONS).includes(n),
+  );
+  const scopeLockTable: Array<[string, Record<string, unknown>, string]> = createBases.length
+    ? createBases
+    : [['(all removed)', {}, '']];
+  describe.each(scopeLockTable)('%s scope lock', (_name, base, path) => {
+    if (createBases.length === 0) {
+      it('every create action is removed', () => {});
+      return;
+    }
+
     it('omitted placement fields are filled with exactly the constants', async () => {
       const r = await call(base);
       expect(r.isError).toBeFalsy();
