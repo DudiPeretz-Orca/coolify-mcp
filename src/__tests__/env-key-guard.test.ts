@@ -35,15 +35,25 @@ const DENIED = [
   'ENV',
   'PYTHONSTARTUP',
   'GIT_EXEC_PATH',
+  'NODE_OPTIONS',
+  'JAVA_TOOL_OPTIONS',
+  'JDK_JAVA_OPTIONS',
+  '_JAVA_OPTIONS',
+  'RAILPACK_INSTALL_CMD',
+  'BUILDX_CONFIG',
+  'NIXPACKS-INSTALL-CMD',
+  'nixpacks.install.cmd',
+  'node-options',
+  'Docker.Host',
 ];
 const ALLOWED = [
   'API_URL',
   'PORT',
-  'NODE_OPTIONS',
   'PYTHONPATH',
   'DATABASE_URL',
   'REPORT_GZ_B64',
   'lower_case_key',
+  'PERL5OPT',
   'my.dotted-key',
 ];
 const BAD_SHAPES = ['A=B', ' KEY', 'KEY ', '', 'K\nL', 'K\0L', '1ABC', 'A'.repeat(257)];
@@ -122,6 +132,73 @@ describe('env_vars key denylist', () => {
     });
   });
 
+  describe('values', () => {
+    const PEM = '-----BEGIN KEY-----\nabc=\ndef\n-----END KEY-----';
+    const reqs: Array<[string, (v: string, ml?: boolean) => Record<string, unknown>]> = [
+      ['create', (value, ml) => ({ action: 'create', key: 'K', value, is_multiline: ml })],
+      ['update', (value, ml) => ({ action: 'update', key: 'K', value, is_multiline: ml })],
+      [
+        'bulk_update',
+        (value, ml) => ({ action: 'bulk_update', data: [{ key: 'K', value, is_multiline: ml }] }),
+      ],
+    ];
+    describe.each(reqs)('%s', (_n, build) => {
+      it.each([
+        ['CR', 'a\rb', true],
+        ['NUL', 'a\0b', true],
+        ['LF without is_multiline', 'a\nb', undefined],
+        ['LF with is_multiline false', 'a\nb', false],
+        ['denied assignment line', 'ok\nNIXPACKS_INSTALL_CMD=curl x', true],
+        ['export denied assignment', 'ok\nexport BASH_ENV=/x', true],
+        ['dotted denied assignment', 'ok\n  nixpacks.install.cmd = x', true],
+        ['single-line denied assignment', 'NODE_OPTIONS=--require x', undefined],
+      ])('refuses %s without echoing the value', async (_c, v, ml) => {
+        const r = await call(build(v as string, ml as boolean | undefined));
+        refused(r);
+        expect(r.content[0].text).not.toContain(v as string);
+      });
+      it('accepts LF with is_multiline true', async () => {
+        expect((await call(build('a\nb', true))).isError).toBeFalsy();
+        expect(writes()).toHaveLength(1);
+      });
+      it('accepts a PEM-like multi-line value', async () => {
+        expect((await call(build(PEM, true))).isError).toBeFalsy();
+      });
+      it('accepts denied text that is not at line start', async () => {
+        expect((await call(build('see NIXPACKS_INSTALL_CMD=x here'))).isError).toBeFalsy();
+      });
+    });
+
+    it('bulk_update with one bad value among good entries is refused as a whole', async () => {
+      refused(
+        await call({
+          action: 'bulk_update',
+          data: [
+            { key: 'A', value: '1' },
+            { key: 'B', value: 'x\ny' },
+          ],
+        }),
+      );
+    });
+
+    it('non-string values are refused (zod bypassed)', async () => {
+      const tool = (
+        server as unknown as {
+          _registeredTools: Record<
+            string,
+            { handler: (a: Record<string, unknown>, extra: unknown) => Promise<ToolRes> }
+          >;
+        }
+      )._registeredTools['env_vars'];
+      refused(
+        await tool.handler(
+          { resource: 'application', uuid: APP, action: 'create', key: 'K', value: 5 },
+          {},
+        ),
+      );
+    });
+  });
+
   it('bulk_update with one denied key among allowed ones is refused as a whole', async () => {
     refused(
       await call({
@@ -166,7 +243,7 @@ describe('env_vars key denylist', () => {
   });
 
   it('exports a frozen-shape denylist and the guard throws typed errors', () => {
-    expect(DENIED_ENV_KEY_PATTERNS).toHaveLength(11);
+    expect(DENIED_ENV_KEY_PATTERNS).toHaveLength(17);
     expect(() => assertEnvKeyAllowed('PORT')).not.toThrow();
     expect(() => assertEnvKeyAllowed('docker_host')).toThrow(/^invalid_argument:/);
   });

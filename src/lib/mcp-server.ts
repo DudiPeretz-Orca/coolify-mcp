@@ -16,7 +16,7 @@ import {
   type ServiceSummary,
 } from './coolify-client.js';
 import { DeployerClient } from './deployer-client.js';
-import { EnvKeyError, assertEnvKeyAllowed } from './env-key-guard.js';
+import { EnvKeyError, assertEnvKeyAllowed, assertEnvValueAllowed } from './env-key-guard.js';
 import { InvalidArgumentError, SAFE_SEGMENT_RE, safeSegment } from './path-safety.js';
 import {
   APP_UUID_RE,
@@ -1142,6 +1142,7 @@ export class CoolifyMcpServer extends McpServer {
         env_uuid: safeId().optional(),
         is_buildtime: z.boolean().optional(),
         is_runtime: z.boolean().optional(),
+        is_multiline: z.boolean().optional(),
         data: z
           .array(
             z.object({
@@ -1157,7 +1158,18 @@ export class CoolifyMcpServer extends McpServer {
           )
           .optional(),
       },
-      async ({ resource, action, uuid, key, value, env_uuid, is_buildtime, is_runtime, data }) => {
+      async ({
+        resource,
+        action,
+        uuid,
+        key,
+        value,
+        env_uuid,
+        is_buildtime,
+        is_runtime,
+        is_multiline,
+        data,
+      }) => {
         // Defence in depth: the schema already restricts this, but a caller that bypasses
         // validation must still not reach service/database env vars.
         if (resource !== 'application') {
@@ -1172,11 +1184,18 @@ export class CoolifyMcpServer extends McpServer {
         const denied = await denyUnlessInScope(async () => {
           if (env_uuid !== undefined) safeSegment(env_uuid, 'env_uuid');
           // An absent key keeps the handler's own "key, value required" error.
-          if ((action === 'create' || action === 'update') && key !== undefined)
-            assertEnvKeyAllowed(key);
+          if (action === 'create' || action === 'update') {
+            if (key !== undefined) assertEnvKeyAllowed(key);
+            if (value !== undefined) assertEnvValueAllowed(value, is_multiline, 'value');
+          }
           if (action === 'bulk_update' && data !== undefined) {
             if (!Array.isArray(data)) assertEnvKeyAllowed(undefined);
-            else for (const entry of data) assertEnvKeyAllowed(entry?.key);
+            else {
+              data.forEach((entry, i) => {
+                assertEnvKeyAllowed(entry?.key);
+                assertEnvValueAllowed(entry.value, entry.is_multiline, `data[${i}].value`);
+              });
+            }
           }
           await assertAppInScope(this.client, uuid);
         });
@@ -1194,6 +1213,7 @@ export class CoolifyMcpServer extends McpServer {
                 value,
                 is_buildtime,
                 is_runtime,
+                is_multiline,
               }),
             );
           case 'update':
@@ -1205,6 +1225,7 @@ export class CoolifyMcpServer extends McpServer {
                 value,
                 is_buildtime,
                 is_runtime,
+                is_multiline,
               }),
             );
           case 'delete':
